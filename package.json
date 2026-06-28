@@ -13,7 +13,10 @@
     "view-db": "node view-db.js",
     "build": "vite build",
     "preview": "vite preview",
-    "server": "node server.js"
+    "server": "node server.js",
+    "ml:install": "pip install -r ml/requirements.txt",
+    "ml:predict": "python ml/predict.py --coin-id bitcoin --symbol BTC --days 90",
+    "ml:portfolio": "python ml/portfolio_optimize.py --symbols BTC,ETH,SOL,BNB --days 90 --budget 10000"
   },
   "keywords": [],
   "author": "",
