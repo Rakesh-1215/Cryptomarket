@@ -125,7 +125,7 @@ def build_lstm_sequences(
     targets = []
     for idx in range(lookback, len(values)):
         window = values[idx - lookback : idx]
-        features.append(window)
+        features.append(window.reshape(lookback, 1))
         targets.append(values[idx])
     return np.asarray(features, dtype=np.float64), np.asarray(targets, dtype=np.float64)
 
@@ -156,7 +156,7 @@ def train_lstm(
         rmse = 0.0
         mae = 0.0
 
-    last_window = normalized[-lookback:]
+    last_window = normalized[-lookback:].reshape(lookback, 1)
     next_norm = model.predict(last_window)
     next_price = float(next_norm * std + mean)
     return model, rmse, mae, next_price

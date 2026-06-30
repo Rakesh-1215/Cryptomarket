@@ -1,9 +1,11 @@
 const { spawn } = require("child_process");
+const fs = require("fs");
 const path = require("path");
 
 const ML_DIR = path.join(__dirname, "..", "ml");
 const PREDICT_SCRIPT = path.join(ML_DIR, "predict.py");
-const PYTHON_BIN = process.env.PYTHON_BIN || "python";
+const VENV_PYTHON = path.join(__dirname, "..", ".venv", "Scripts", "python.exe");
+const PYTHON_BIN = process.env.PYTHON_BIN || (fs.existsSync(VENV_PYTHON) ? VENV_PYTHON : "python");
 
 const COIN_PREDICTIONS = [
   { symbol: "BTC", name: "Bitcoin", coinId: "bitcoin" },
