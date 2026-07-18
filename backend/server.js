@@ -26,6 +26,7 @@ const app = express();
 const PORT = process.env.PORT || 8080;
 const COINLORE_API_URL = "https://api.coinlore.net/api/tickers/";
 const JWT_SECRET = process.env.JWT_SECRET || "local-dev-secret-change-me";
+const FRONTEND_DIST_DIR = path.join(__dirname, "..", "frontend", "dist");
 let isMongoReady = false;
 
 mongoose.set("bufferCommands", false);
@@ -33,7 +34,7 @@ mongoose.set("bufferCommands", false);
 // Middleware
 app.use(cors());
 app.use(express.json());
-app.use(express.static(__dirname));
+app.use(express.static(FRONTEND_DIST_DIR));
 
 // Connect to MongoDB
 mongoose
@@ -479,9 +480,16 @@ app.get("/api/purchases", requireDatabase, authenticate, async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
-// Serve React app
-app.get("/", (req, res) => {
-  res.sendFile(path.join(__dirname, "index.html"));
+// Serve the built React app in production.
+app.get("*", (req, res, next) => {
+  if (req.path.startsWith("/api")) {
+    next();
+    return;
+  }
+
+  res.sendFile(path.join(FRONTEND_DIST_DIR, "index.html"), (error) => {
+    if (error) next();
+  });
 });
 
 let server;

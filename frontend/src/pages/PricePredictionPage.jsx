@@ -4,7 +4,7 @@ import {
   formatPrice,
   getChangeColor,
 } from "../utils/coinFormatting.js";
-import { buildForecastChartData } from "../../../services/forecastChart.js";
+import { buildForecastChartData } from "../utils/forecastChart.js";
 const MODEL_LABELS = {
   lstm: "LSTM",
   xgboost: "XGBoost",
