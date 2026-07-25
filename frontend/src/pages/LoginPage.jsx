@@ -17,7 +17,12 @@ export default function LoginPage() {
       const result = await login(email.trim(), password);
 
       if (result.success) {
-        navigate("/");
+        navigate("/verify-email", {
+          state: {
+            email: result.email || email.trim().toLowerCase(),
+            mode: "login",
+          },
+        });
       } else {
         alert(result.error || "Login failed");
       }

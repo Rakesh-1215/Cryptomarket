@@ -1,14 +1,23 @@
-require("dotenv").config();
+const path = require("path");
+require("dotenv").config({ path: path.join(__dirname, ".env") });
 const express = require("express");
 const mongoose = require("mongoose");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const cors = require("cors");
-const path = require("path");
+const crypto = require("crypto");
 const { spawnSync } = require("child_process");
 
 const User = require("./models/User");
 const Transaction = require("./models/Transaction");
+const {
+  sendVerificationOtpEmail,
+  sendLoginOtpEmail,
+  sendWelcomeEmail,
+  createTransporter,
+  getFromAddress,
+  sendTestEmail,
+} = require("./services/email");
 const {
   getPricePrediction,
   listPredictableCoins,
@@ -26,6 +35,21 @@ const app = express();
 const PORT = process.env.PORT || 8080;
 const COINLORE_API_URL = "https://api.coinlore.net/api/tickers/";
 const JWT_SECRET = process.env.JWT_SECRET || "local-dev-secret-change-me";
+const RAZORPAY_API_BASE_URL = "https://api.razorpay.com/v1";
+const RAZORPAY_KEY_ID = String(process.env.RAZORPAY_KEY_ID || "").trim();
+const RAZORPAY_KEY_SECRET = String(process.env.RAZORPAY_KEY_SECRET || "").trim();
+const RAZORPAY_COMPANY_NAME = String(process.env.RAZORPAY_COMPANY_NAME || "Cryptomarket").trim();
+const RAZORPAY_CHECKOUT_THEME_COLOR = String(
+  process.env.RAZORPAY_CHECKOUT_THEME_COLOR || "#2563eb",
+).trim();
+const RAZORPAY_TEST_AUTO_SUCCESS = String(
+  process.env.RAZORPAY_TEST_AUTO_SUCCESS || "false",
+).trim() === "true";
+const USD_TO_INR_RATE = Number.parseFloat(process.env.USD_TO_INR_RATE) || 86;
+const EMAIL_VERIFICATION_TTL_MINUTES = Number.parseInt(
+  process.env.EMAIL_VERIFICATION_TTL_MINUTES,
+  10,
+) || 10;
 const FRONTEND_DIST_DIR = path.join(__dirname, "..", "frontend", "dist");
 let isMongoReady = false;
 
@@ -172,30 +196,392 @@ async function fetchCryptoData() {
   return payload.data.map(addAiInsights);
 }
 
+function generateOtp() {
+  return crypto.randomInt(100000, 1000000).toString();
+}
+
+async function storeVerificationCode(user, otp) {
+  user.emailVerified = false;
+  user.emailVerificationToken = await bcrypt.hash(otp, 10);
+  user.emailVerificationExpiresAt = new Date(
+    Date.now() + EMAIL_VERIFICATION_TTL_MINUTES * 60 * 1000,
+  );
+  await user.save();
+}
+
+async function storeLoginOtp(user, otp) {
+  user.loginOtpToken = await bcrypt.hash(otp, 10);
+  user.loginOtpExpiresAt = new Date(
+    Date.now() + EMAIL_VERIFICATION_TTL_MINUTES * 60 * 1000,
+  );
+  await user.save();
+}
+
+function createAuthToken(user) {
+  return jwt.sign({ userId: user._id }, JWT_SECRET, {
+    expiresIn: "1h",
+  });
+}
+
+function isRazorpayConfigured() {
+  return Boolean(RAZORPAY_KEY_ID && RAZORPAY_KEY_SECRET);
+}
+
+function isRazorpayTestMode() {
+  return RAZORPAY_KEY_ID.startsWith("rzp_test_");
+}
+
+function getRazorpayAuthHeader() {
+  const credentials = Buffer.from(`${RAZORPAY_KEY_ID}:${RAZORPAY_KEY_SECRET}`).toString("base64");
+  return `Basic ${credentials}`;
+}
+
+function maskSecret(value) {
+  const text = String(value || "");
+  if (text.length <= 6) return "*".repeat(text.length);
+  return `${text.slice(0, 3)}***${text.slice(-3)}`;
+}
+
+function convertUsdToInr(usdAmount) {
+  return Number((usdAmount * USD_TO_INR_RATE).toFixed(2));
+}
+
+function amountToPaise(amount) {
+  return Math.round(amount * 100);
+}
+
+async function razorpayRequest(endpoint, options = {}) {
+  if (!isRazorpayConfigured()) {
+    throw new Error("Razorpay is not configured. Set RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET in backend/.env.");
+  }
+
+  const fetchClient =
+    globalThis.fetch || ((...args) => import("node-fetch").then(({ default: fetch }) => fetch(...args)));
+  const response = await fetchClient(`${RAZORPAY_API_BASE_URL}${endpoint}`, {
+    ...options,
+    headers: {
+      Authorization: getRazorpayAuthHeader(),
+      "Content-Type": "application/json",
+      ...(options.headers || {}),
+    },
+  });
+
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    if (response.status === 401) {
+      throw new Error(
+        `Razorpay authentication failed. Check that your test key pair matches exactly in backend/.env. Current key id: ${RAZORPAY_KEY_ID || "(missing)"}, secret: ${maskSecret(RAZORPAY_KEY_SECRET)}.`,
+      );
+    }
+    throw new Error(payload.error?.description || payload.error?.reason || "Razorpay request failed.");
+  }
+
+  return payload;
+}
+
+function verifyRazorpaySignature({ orderId, paymentId, signature }) {
+  const expectedSignature = crypto
+    .createHmac("sha256", RAZORPAY_KEY_SECRET)
+    .update(`${orderId}|${paymentId}`)
+    .digest("hex");
+
+  return expectedSignature === signature;
+}
+
+function buildRecordedTransaction({
+  userId,
+  cryptoType,
+  amount,
+  price,
+  totalValueInr,
+  currency,
+  paymentStatus,
+  paymentOrderId,
+  paymentId,
+  paymentSignature,
+  paymentMethod,
+  paymentEmail,
+  paymentContact,
+}) {
+  const parsedAmount = Number.parseFloat(amount);
+  const parsedPrice = Number.parseFloat(price);
+  const totalValue = Number((parsedAmount * parsedPrice).toFixed(8));
+
+  return new Transaction({
+    buyer: userId,
+    cryptoType: normalizeHoldingKey(cryptoType),
+    amount: parsedAmount,
+    price: parsedPrice,
+    totalValue,
+    totalValueInr,
+    currency: currency || "INR",
+    paymentProvider: "razorpay",
+    paymentStatus,
+    paymentOrderId,
+    paymentId,
+    paymentSignature: paymentSignature || null,
+    paymentMethod: paymentMethod || null,
+    paymentEmail: paymentEmail || null,
+    paymentContact: paymentContact || null,
+  });
+}
+
 // Routes
 app.post("/api/register", requireDatabase, async (req, res) => {
   try {
     const { username, email, password } = req.body;
+
+    console.log("====================================");
+    console.log("New Registration Request");
+    console.log("Username:", username);
+    console.log("Email:", email);
+
+    const normalizedEmail = String(email || "").trim().toLowerCase();
+
+    const otp = generateOtp();
+    console.log("Generated OTP:", otp);
+
     const hashedPassword = await bcrypt.hash(password, 10);
-    const user = new User({ username, email, password: hashedPassword });
-    await user.save();
-    res.status(201).json({ message: "User registered successfully" });
+
+    const user = new User({
+      username,
+      email: normalizedEmail,
+      password: hashedPassword,
+    });
+
+    await storeVerificationCode(user, otp);
+    console.log("User saved to MongoDB.");
+
+    const emailResult = await sendVerificationOtpEmail({
+      username,
+      email: normalizedEmail,
+      otp,
+    });
+
+    console.log("Email Result:", emailResult);
+
+    if (!emailResult.sent) {
+      console.log("Deleting user because email failed...");
+      await User.deleteOne({ _id: user._id });
+
+      return res.status(502).json({
+        error:
+          emailResult.error ||
+          "Verification email could not be sent.",
+      });
+    }
+
+    console.log("Registration completed successfully.");
+    console.log("====================================");
+
+    res.status(201).json({
+      message: "User registered successfully. Verify your email with the OTP we sent.",
+      verificationRequired: true,
+      email: normalizedEmail,
+    });
+
   } catch (error) {
-    res.status(400).json({ error: error.message });
+    console.error("REGISTER ERROR");
+    console.error(error);
+
+    res.status(400).json({
+      error: error.message,
+    });
+  }
+});
+
+app.post("/api/verify-email", requireDatabase, async (req, res) => {
+  try {
+    const { email, otp } = req.body;
+    const normalizedEmail = String(email || "").trim().toLowerCase();
+    const verificationCode = String(otp || "").trim();
+
+    if (!normalizedEmail || !verificationCode) {
+      return res.status(400).json({ error: "Email and OTP are required." });
+    }
+
+    const user = await User.findOne({ email: normalizedEmail });
+    if (!user) {
+      return res.status(404).json({ error: "User not found." });
+    }
+
+    if (user.emailVerified) {
+      return res.json({ message: "Email is already verified." });
+    }
+
+    if (!user.emailVerificationToken || !user.emailVerificationExpiresAt) {
+      return res.status(400).json({ error: "No verification code is active for this account." });
+    }
+
+    if (user.emailVerificationExpiresAt.getTime() < Date.now()) {
+      return res.status(400).json({ error: "OTP has expired. Please request a new code." });
+    }
+
+    const isValid = await bcrypt.compare(verificationCode, user.emailVerificationToken);
+    if (!isValid) {
+      return res.status(400).json({ error: "Invalid OTP." });
+    }
+
+    user.emailVerified = true;
+    user.emailVerificationToken = null;
+    user.emailVerificationExpiresAt = null;
+    await user.save();
+
+    res.json({ message: "Email verified successfully." });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post("/api/resend-verification-otp", requireDatabase, async (req, res) => {
+  try {
+    const { email } = req.body;
+    const normalizedEmail = String(email || "").trim().toLowerCase();
+
+    if (!normalizedEmail) {
+      return res.status(400).json({ error: "Email is required." });
+    }
+
+    const user = await User.findOne({ email: normalizedEmail });
+    if (!user) {
+      return res.status(404).json({ error: "User not found." });
+    }
+
+    if (user.emailVerified) {
+      return res.status(400).json({ error: "Email is already verified." });
+    }
+
+    const otp = generateOtp();
+    await storeVerificationCode(user, otp);
+    const emailResult = await sendVerificationOtpEmail({ username: user.username, email: normalizedEmail, otp });
+    if (!emailResult.sent) {
+      return res.status(502).json({
+        error:
+          emailResult.skipped
+            ? "Email verification is not configured yet. Set SMTP_HOST, SMTP_USER, SMTP_PASS, and SMTP_FROM in backend/.env."
+            : "Verification email could not be sent. Please try again later.",
+      });
+    }
+
+    res.json({ message: "A new OTP has been sent to your email." });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post("/api/test-email", async (req, res) => {
+  try {
+    const { to, subject, text } = req.body;
+    const recipient = String(to || process.env.SMTP_USER || process.env.SMTP_FROM || "").trim();
+
+    if (!recipient) {
+      return res.status(400).json({
+        error: "Recipient email is required, or set SMTP_USER/SMTP_FROM in backend/.env.",
+      });
+    }
+
+    const result = await sendTestEmail({
+      to: recipient,
+      subject,
+      text,
+    });
+
+    if (!result.sent) {
+      return res.status(502).json({
+        error:
+          result.skipped
+            ? "SMTP is not configured. Set SMTP_HOST, SMTP_USER, SMTP_PASS, and SMTP_FROM in backend/.env."
+            : result.error || "Test email could not be sent.",
+      });
+    }
+
+    res.json({ message: `Test email sent to ${recipient}.` });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
   }
 });
 
 app.post("/api/login", requireDatabase, async (req, res) => {
   try {
     const { email, password } = req.body;
-    const user = await User.findOne({ email });
+    const normalizedEmail = String(email || "").trim().toLowerCase();
+    const user = await User.findOne({ email: normalizedEmail });
     if (!user || !(await bcrypt.compare(password, user.password))) {
       return res.status(401).json({ error: "Invalid credentials" });
     }
-    const token = jwt.sign({ userId: user._id }, JWT_SECRET, {
-      expiresIn: "1h",
+
+    if (user.emailVerified !== true) {
+      return res.status(403).json({ error: "Please verify your email before logging in." });
+    }
+
+    const otp = generateOtp();
+    await storeLoginOtp(user, otp);
+
+    // ✅ UNCOMMENT THIS LINE
+    const emailResult = await sendLoginOtpEmail({
+      username: user.username,
+      email: normalizedEmail,
+      otp,
     });
-    res.json({ token });
+
+    if (!emailResult.sent) {
+      return res.status(502).json({
+        error:
+          emailResult.skipped
+            ? "Login OTP email is not configured yet. Set SMTP_HOST, SMTP_USER, SMTP_PASS, and SMTP_FROM in backend/.env."
+            : "Login OTP could not be sent. Please try again later.",
+      });
+    }
+
+    res.json({
+      message: "Login OTP sent to your email.",
+      verificationRequired: true,
+      email: normalizedEmail,
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post("/api/verify-login-otp", requireDatabase, async (req, res) => {
+  try {
+    const { email, otp } = req.body;
+    const normalizedEmail = String(email || "").trim().toLowerCase();
+    const loginOtp = String(otp || "").trim();
+
+    if (!normalizedEmail || !loginOtp) {
+      return res.status(400).json({ error: "Email and OTP are required." });
+    }
+
+    const user = await User.findOne({ email: normalizedEmail });
+    if (!user) {
+      return res.status(404).json({ error: "User not found." });
+    }
+
+    if (!user.loginOtpToken || !user.loginOtpExpiresAt) {
+      return res.status(400).json({ error: "No login OTP is active for this account." });
+    }
+
+    if (user.loginOtpExpiresAt.getTime() < Date.now()) {
+      user.loginOtpToken = null;
+      user.loginOtpExpiresAt = null;
+      await user.save();
+      return res.status(400).json({ error: "Login OTP has expired. Please sign in again." });
+    }
+
+    const isValid = await bcrypt.compare(loginOtp, user.loginOtpToken);
+    if (!isValid) {
+      return res.status(400).json({ error: "Invalid OTP." });
+    }
+
+    user.loginOtpToken = null;
+    user.loginOtpExpiresAt = null;
+    await user.save();
+
+    res.json({
+      token: createAuthToken(user),
+      user: { id: user._id, username: user.username, email: user.email },
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -417,6 +803,301 @@ app.post("/api/buy", requireDatabase, authenticate, async (req, res) => {
     res.status(201).json({ message: "Purchase recorded successfully" });
   } catch (error) {
     res.status(400).json({ error: error.message });
+  }
+});
+
+app.get("/api/payments/razorpay/config", authenticate, (req, res) => {
+  if (!isRazorpayConfigured()) {
+    return res.status(503).json({
+      error: "Razorpay is not configured. Add RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET to backend/.env.",
+    });
+  }
+
+  res.json({
+    keyId: RAZORPAY_KEY_ID,
+    companyName: RAZORPAY_COMPANY_NAME,
+    themeColor: RAZORPAY_CHECKOUT_THEME_COLOR,
+    currency: "INR",
+    usdToInrRate: USD_TO_INR_RATE,
+  });
+});
+
+app.post("/api/payments/razorpay/order", requireDatabase, authenticate, async (req, res) => {
+  try {
+    if (!isRazorpayConfigured()) {
+      return res.status(503).json({
+        error: "Razorpay is not configured. Add RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET to backend/.env.",
+      });
+    }
+
+    const cryptoType = normalizeHoldingKey(req.body.cryptoType);
+    const cryptoName = String(req.body.cryptoName || cryptoType).trim() || cryptoType;
+    const amount = Number.parseFloat(req.body.amount);
+    const price = Number.parseFloat(req.body.price);
+
+    if (!cryptoType) {
+      return res.status(400).json({ error: "cryptoType is required." });
+    }
+
+    if (!Number.isFinite(amount) || amount <= 0) {
+      return res.status(400).json({ error: "A valid crypto amount is required." });
+    }
+
+    if (!Number.isFinite(price) || price <= 0) {
+      return res.status(400).json({ error: "A valid price is required." });
+    }
+
+    const totalValue = Number((amount * price).toFixed(8));
+    const totalValueInr = convertUsdToInr(totalValue);
+    const amountInPaise = amountToPaise(totalValueInr);
+
+    if (!Number.isFinite(amountInPaise) || amountInPaise < 100) {
+      return res.status(400).json({
+        error: "The minimum Razorpay test amount is INR 1.00. Increase the quantity and try again.",
+      });
+    }
+
+    const receipt = `cm_${Date.now()}_${cryptoType.slice(0, 6)}`.slice(0, 40);
+    const order = await razorpayRequest("/orders", {
+      method: "POST",
+      body: JSON.stringify({
+        amount: amountInPaise,
+        currency: "INR",
+        receipt,
+        notes: {
+          buyerId: String(req.userId),
+          cryptoType,
+          cryptoName,
+          quantity: String(amount),
+          unitPriceUsd: String(price),
+          totalValueUsd: String(totalValue),
+          totalValueInr: String(totalValueInr),
+        },
+      }),
+    });
+
+    res.status(201).json({
+      orderId: order.id,
+      amount: order.amount,
+      currency: order.currency,
+      receipt: order.receipt,
+      cryptoType,
+      cryptoName,
+      quantity: amount,
+      unitPriceUsd: price,
+      totalValueUsd: totalValue,
+      totalValueInr,
+      usdToInrRate: USD_TO_INR_RATE,
+      companyName: RAZORPAY_COMPANY_NAME,
+      themeColor: RAZORPAY_CHECKOUT_THEME_COLOR,
+      keyId: RAZORPAY_KEY_ID,
+      testMode: isRazorpayTestMode(),
+      testAutoSuccess: isRazorpayTestMode() && RAZORPAY_TEST_AUTO_SUCCESS,
+    });
+  } catch (error) {
+    res.status(502).json({ error: error.message });
+  }
+});
+
+app.post("/api/payments/razorpay/test-success", requireDatabase, authenticate, async (req, res) => {
+  try {
+    if (!isRazorpayConfigured()) {
+      return res.status(503).json({
+        error: "Razorpay is not configured. Add RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET to backend/.env.",
+      });
+    }
+
+    if (!isRazorpayTestMode() || !RAZORPAY_TEST_AUTO_SUCCESS) {
+      return res.status(403).json({
+        error: "Test auto-success is disabled.",
+      });
+    }
+
+    const {
+      razorpay_order_id: razorpayOrderId,
+      cryptoType,
+      cryptoName,
+      amount,
+      price,
+      preferredMethod,
+    } = req.body;
+
+    if (!razorpayOrderId || !cryptoType || !amount || !price) {
+      return res.status(400).json({
+        error: "razorpay_order_id, cryptoType, amount, and price are required.",
+      });
+    }
+
+    const existingTransaction = await Transaction.findOne({
+      paymentOrderId: razorpayOrderId,
+      buyer: req.userId,
+    });
+    if (existingTransaction) {
+      return res.json({
+        success: true,
+        message: "Payment already recorded.",
+        transaction: existingTransaction,
+      });
+    }
+
+    const parsedAmount = Number.parseFloat(amount);
+    const parsedPrice = Number.parseFloat(price);
+    if (!Number.isFinite(parsedAmount) || parsedAmount <= 0 || !Number.isFinite(parsedPrice) || parsedPrice <= 0) {
+      return res.status(400).json({ error: "Valid purchase amount and price are required." });
+    }
+
+    const totalValueInr = convertUsdToInr(parsedAmount * parsedPrice);
+    const transaction = buildRecordedTransaction({
+      userId: req.userId,
+      cryptoType,
+      amount: parsedAmount,
+      price: parsedPrice,
+      totalValueInr,
+      currency: "INR",
+      paymentStatus: "captured",
+      paymentOrderId: razorpayOrderId,
+      paymentId: `pay_test_auto_${Date.now()}`,
+      paymentSignature: null,
+      paymentMethod: preferredMethod === "paylater" ? "paylater_test_auto" : "card_test_auto",
+    });
+
+    await transaction.save();
+
+    res.status(201).json({
+      success: true,
+      message: "Test payment auto-completed successfully.",
+      transaction,
+      payment: {
+        id: transaction.paymentId,
+        status: transaction.paymentStatus,
+        method: transaction.paymentMethod,
+        amount: totalValueInr,
+        currency: "INR",
+      },
+      crypto: {
+        name: cryptoName,
+        symbol: normalizeHoldingKey(cryptoType),
+        quantity: parsedAmount,
+        unitPriceUsd: parsedPrice,
+        totalValueUsd: Number((parsedAmount * parsedPrice).toFixed(8)),
+        totalValueInr,
+      },
+    });
+  } catch (error) {
+    res.status(502).json({ error: error.message });
+  }
+});
+
+app.post("/api/payments/razorpay/verify", requireDatabase, authenticate, async (req, res) => {
+  try {
+    if (!isRazorpayConfigured()) {
+      return res.status(503).json({
+        error: "Razorpay is not configured. Add RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET to backend/.env.",
+      });
+    }
+
+    const {
+      razorpay_order_id: razorpayOrderId,
+      razorpay_payment_id: razorpayPaymentId,
+      razorpay_signature: razorpaySignature,
+      cryptoType,
+      cryptoName,
+      amount,
+      price,
+    } = req.body;
+
+    if (!razorpayOrderId || !razorpayPaymentId || !razorpaySignature) {
+      return res.status(400).json({
+        error: "razorpay_order_id, razorpay_payment_id, and razorpay_signature are required.",
+      });
+    }
+
+    const existingTransaction = await Transaction.findOne({
+      paymentOrderId: razorpayOrderId,
+      paymentId: razorpayPaymentId,
+      buyer: req.userId,
+    });
+    if (existingTransaction) {
+      return res.json({
+        success: true,
+        message: "Payment already verified.",
+        transaction: existingTransaction,
+      });
+    }
+
+    const isSignatureValid = verifyRazorpaySignature({
+      orderId: razorpayOrderId,
+      paymentId: razorpayPaymentId,
+      signature: razorpaySignature,
+    });
+
+    if (!isSignatureValid) {
+      return res.status(400).json({ error: "Invalid Razorpay signature." });
+    }
+
+    const payment = await razorpayRequest(`/payments/${razorpayPaymentId}`, {
+      method: "GET",
+    });
+
+    if (payment.order_id !== razorpayOrderId) {
+      return res.status(400).json({ error: "Payment order mismatch." });
+    }
+
+    if (!["authorized", "captured"].includes(payment.status)) {
+      return res.status(400).json({
+        error: `Payment is not successful yet. Current Razorpay status: ${payment.status}.`,
+      });
+    }
+
+    const parsedAmount = Number.parseFloat(amount);
+    const parsedPrice = Number.parseFloat(price);
+    if (!Number.isFinite(parsedAmount) || parsedAmount <= 0 || !Number.isFinite(parsedPrice) || parsedPrice <= 0) {
+      return res.status(400).json({ error: "Valid purchase amount and price are required." });
+    }
+
+    const totalValue = Number((parsedAmount * parsedPrice).toFixed(8));
+    const totalValueInr = Number(((payment.amount || 0) / 100).toFixed(2));
+
+    const transaction = buildRecordedTransaction({
+      userId: req.userId,
+      cryptoType,
+      amount: parsedAmount,
+      price: parsedPrice,
+      totalValueInr,
+      currency: payment.currency || "INR",
+      paymentStatus: payment.status,
+      paymentOrderId: razorpayOrderId,
+      paymentId: razorpayPaymentId,
+      paymentSignature: razorpaySignature,
+      paymentMethod: payment.method || null,
+      paymentEmail: payment.email || null,
+      paymentContact: payment.contact || null,
+    });
+
+    await transaction.save();
+
+    res.status(201).json({
+      success: true,
+      message: "Payment verified and purchase recorded successfully.",
+      transaction,
+      payment: {
+        id: payment.id,
+        status: payment.status,
+        method: payment.method,
+        amount: totalValueInr,
+        currency: payment.currency,
+      },
+      crypto: {
+        name: cryptoName,
+        symbol: normalizeHoldingKey(cryptoType),
+        quantity: parsedAmount,
+        unitPriceUsd: parsedPrice,
+        totalValueUsd: totalValue,
+        totalValueInr,
+      },
+    });
+  } catch (error) {
+    res.status(502).json({ error: error.message });
   }
 });
 // Verify token endpoint

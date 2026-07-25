@@ -8,12 +8,18 @@ function Badge({ children, className }) {
 }
 
 export default function RecommendationsPage() {
-  const { isAuthenticated, token, buyCrypto } = useAuth();
+  const { isAuthenticated, token, buyCryptoWithRazorpay } = useAuth();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [buyingSymbol, setBuyingSymbol] = useState("");
   const [message, setMessage] = useState("");
+  const [paymentCoin, setPaymentCoin] = useState(null);
+  const [quantity, setQuantity] = useState("1");
+  const [paymentMethod, setPaymentMethod] = useState("card");
+  const [paymentError, setPaymentError] = useState("");
+  const [paymentSuccess, setPaymentSuccess] = useState("");
+  const [submittingPayment, setSubmittingPayment] = useState(false);
 
   useEffect(() => {
     document.title = "Crypto Market - Personalized Recommendations";
@@ -65,29 +71,72 @@ export default function RecommendationsPage() {
       alert("Please login first to buy this coin.");
       return;
     }
+    setPaymentCoin(coin);
+    setQuantity("1");
+    setPaymentMethod("card");
+    setPaymentError("");
+    setPaymentSuccess("");
+  };
 
-    const symbol = (coin.symbol || "").toUpperCase();
-    const price = Number.parseFloat(coin.price_usd) || 0;
-    const qtyStr = prompt(`Buy ${symbol}\n\nCurrent Price: $${price.toFixed(2)}\n\nEnter quantity:`, "1");
-    if (qtyStr === null) return;
+  const closePaymentModal = () => {
+    if (submittingPayment) return;
+    setPaymentCoin(null);
+    setPaymentError("");
+    setPaymentSuccess("");
+  };
 
-    const qty = Number(qtyStr);
-    if (!Number.isFinite(qty) || qty <= 0) {
-      alert("Please enter a valid quantity.");
+  const totalAmount = useMemo(() => {
+    if (!paymentCoin) return 0;
+    const qty = Number(quantity);
+    const price = Number.parseFloat(paymentCoin.price_usd) || 0;
+    if (!Number.isFinite(qty) || qty <= 0) return 0;
+    return qty * price;
+  }, [paymentCoin, quantity]);
+
+  const validatePayment = () => {
+    const qty = Number(quantity);
+    if (!Number.isFinite(qty) || qty <= 0) return "Please enter a valid quantity.";
+    return "";
+  };
+
+  const submitPayment = async (e) => {
+    e.preventDefault();
+    setPaymentError("");
+    setPaymentSuccess("");
+
+    const validationMsg = validatePayment();
+    if (validationMsg) {
+      setPaymentError(validationMsg);
       return;
     }
 
-    setBuyingSymbol(symbol);
-    setMessage("");
+    const symbol = (paymentCoin?.symbol || "").toUpperCase();
+    const name = paymentCoin?.name || symbol;
+    const qty = Number(quantity);
+    const price = Number.parseFloat(paymentCoin.price_usd) || 0;
+
     try {
-      const result = await buyCrypto(symbol, qty, price);
+      setSubmittingPayment(true);
+      setBuyingSymbol(symbol);
+      const result = await buyCryptoWithRazorpay({
+        cryptoType: symbol,
+        cryptoName: name,
+        amount: qty,
+        price,
+        preferredMethod: paymentMethod,
+      });
       if (!result.success) {
-        setError(result.error || "Purchase failed.");
+        setPaymentError(result.error || "Purchase failed.");
         return;
       }
-      setMessage(`Purchased ${qty} ${symbol} for $${(qty * price).toFixed(2)}.`);
+      setPaymentSuccess(`Payment successful via ${paymentMethod === "paylater" ? "Pay Later" : "Card"}. Purchased ${qty} ${symbol} for $${totalAmount.toFixed(2)}.`);
+      setMessage(`Payment successful. Purchased ${qty} ${symbol} for $${(qty * price).toFixed(2)}.`);
+      setTimeout(() => {
+        closePaymentModal();
+      }, 2000);
     } finally {
       setBuyingSymbol("");
+      setSubmittingPayment(false);
     }
   };
 
@@ -181,6 +230,61 @@ export default function RecommendationsPage() {
           {message ? <p className="mt-6 text-sm text-green-400">{message}</p> : null}
         </>
       )}
+
+      {paymentCoin ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={closePaymentModal}>
+          <div className="w-full max-w-md rounded-xl border border-gray-800 bg-gray-900 p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-4 flex items-center justify-between">
+              <h3 className="text-lg font-bold text-white">Buy {paymentCoin.name}</h3>
+              <button type="button" className="text-gray-400 hover:text-gray-200" onClick={closePaymentModal}>✕</button>
+            </div>
+
+            <form className="space-y-4" onSubmit={submitPayment}>
+              <div>
+                <label className="mb-1 block text-sm text-gray-300">Quantity</label>
+                <input
+                  type="number"
+                  min="0.0001"
+                  step="any"
+                  value={quantity}
+                  onChange={(e) => setQuantity(e.target.value)}
+                  className="w-full rounded-md border border-gray-700 bg-gray-800 px-3 py-2 text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+
+              <div className="rounded-md border border-blue-800 bg-blue-950/40 px-3 py-3 text-sm text-blue-100">
+                Choose a payment method below, then Razorpay checkout will open with that method preselected.
+              </div>
+
+              <div>
+                <p className="mb-2 text-sm font-medium text-gray-300">Payment method</p>
+                <div className="grid grid-cols-2 gap-2">
+                  <button type="button" onClick={() => setPaymentMethod("card")} aria-pressed={paymentMethod === "card"} className={`rounded-md border px-3 py-2 text-sm font-medium ${paymentMethod === "card" ? "border-blue-600 bg-blue-600 text-white" : "border-gray-700 bg-gray-800 text-gray-300 hover:bg-gray-700"}`}>
+                    Card
+                  </button>
+                  <button type="button" onClick={() => setPaymentMethod("paylater")} aria-pressed={paymentMethod === "paylater"} className={`rounded-md border px-3 py-2 text-sm font-medium ${paymentMethod === "paylater" ? "border-blue-600 bg-blue-600 text-white" : "border-gray-700 bg-gray-800 text-gray-300 hover:bg-gray-700"}`}>
+                    Pay Later
+                  </button>
+                </div>
+              </div>
+
+              <div className="rounded-md border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-200">
+                Total: <span className="font-semibold">${totalAmount.toFixed(2)}</span>
+              </div>
+              <p className="text-xs text-gray-500">
+                Checkout amount is charged in INR using your backend USD_TO_INR_RATE setting. Pay Later appears only if it is enabled on your Razorpay account.
+              </p>
+
+              {paymentError ? <p className="text-sm text-red-400">{paymentError}</p> : null}
+              {paymentSuccess ? <p className="text-sm text-green-400">{paymentSuccess}</p> : null}
+
+              <button type="submit" disabled={submittingPayment} className="w-full rounded-md bg-green-600 py-2 font-semibold text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-60">
+                {submittingPayment ? "Opening Razorpay..." : "Pay with Razorpay"}
+              </button>
+            </form>
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }

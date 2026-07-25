@@ -129,6 +129,16 @@ Express Backend
 - `bcryptjs`
 - `jsonwebtoken`
 
+### Email verification
+
+- `nodemailer`
+- OTP-based email verification after registration
+- OTP-based login verification before a JWT session is created
+
+### Email
+
+- `nodemailer`
+
 ### External Data Source
 
 - `CoinLore API`
@@ -630,7 +640,35 @@ Create or use:
 ```env
 MONGODB_URI=mongodb://127.0.0.1:27017/cryptomarket
 JWT_SECRET=local-dev-secret-change-me
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_SECURE=false
+SMTP_USER=your-email@gmail.com
+SMTP_PASS=your-app-password
+SMTP_FROM=Cryptomarket <your-email@gmail.com>
+EMAIL_VERIFICATION_TTL_MINUTES=10
 ```
+
+### Verification flow
+
+1. Register a new account.
+2. The backend creates the user with `emailVerified = false` and sends a 6-digit OTP.
+3. Open `/verify-email` and enter the email plus OTP.
+4. After successful verification, submit the login form.
+5. The backend checks the password, sends a login OTP, and only creates the JWT session after the OTP is entered correctly.
+
+### Test email endpoint
+
+You can send a mail test without registering a user:
+
+```bash
+POST /api/test-email
+{
+  "to": "your-email@example.com"
+}
+```
+
+If `to` is omitted, the backend tries `SMTP_USER` or `SMTP_FROM` from `backend/.env`.
 
 ### Install dependencies
 

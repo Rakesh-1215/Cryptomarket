@@ -48,54 +48,6 @@ function sortByVariant(variant, data) {
   return list;
 }
 
-function handleBuy(crypto, buyCrypto, navigate) {
-  // Check if user is logged in
-  if (!buyCrypto) {
-    alert("Please login to buy cryptocurrencies.");
-    navigate("/login");
-    return;
-  }
-
-  const symbol = (crypto.symbol || "").toUpperCase();
-  const name = crypto.name || "this coin";
-  const price = parseFloat(crypto.price_usd) || 0;
-
-  const qtyStr = prompt(
-    `Buy ${name} (${symbol})\n\nCurrent Price: $${price.toFixed(2)}\n\nEnter quantity:`,
-    "1",
-  );
-  if (qtyStr === null) return;
-
-  const qty = Number(qtyStr);
-  if (!Number.isFinite(qty) || qty <= 0) {
-    alert("Please enter a valid quantity.");
-    return;
-  }
-
-  const total = qty * price;
-
-  if (
-    confirm(
-      `Confirm Purchase:\n\n${qty} ${symbol}\nPrice: $${price.toFixed(2)} each\nTotal: $${total.toFixed(2)}\n\nProceed with purchase?`,
-    )
-  ) {
-    // Call the API to record the purchase
-    buyCrypto(symbol, qty, price)
-      .then((result) => {
-        if (result.success) {
-          alert(
-            `Purchase successful!\n\n${qty} ${symbol} purchased for $${total.toFixed(2)}`,
-          );
-        } else {
-          alert("Purchase failed: " + result.error);
-        }
-      })
-      .catch((error) => {
-        alert("Network error. Please try again.");
-      });
-  }
-}
-
 function getVariantTitle(variant) {
   if (variant === "trending") return "Trending";
   if (variant === "mostVisited") return "Most Visited";
@@ -118,7 +70,7 @@ function getRiskClass(label) {
 
 export default function CryptoListPage({ variant }) {
   const navigate = useNavigate();
-  const { buyCrypto, isAuthenticated } = useAuth();
+  const { buyCryptoWithRazorpay, isAuthenticated } = useAuth();
   const [cryptos, setCryptos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -127,13 +79,10 @@ export default function CryptoListPage({ variant }) {
   const [timeframe, setTimeframe] = useState("24h");
   const [paymentCoin, setPaymentCoin] = useState(null);
   const [quantity, setQuantity] = useState("1");
-  const [payMethod, setPayMethod] = useState("upi");
-  const [upiId, setUpiId] = useState("");
-  const [cardNumber, setCardNumber] = useState("");
-  const [cardExpiry, setCardExpiry] = useState("");
-  const [cardCvv, setCardCvv] = useState("");
+  const [paymentMethod, setPaymentMethod] = useState("card");
   const [paymentError, setPaymentError] = useState("");
   const [paymentSuccess, setPaymentSuccess] = useState("");
+  const [submittingPayment, setSubmittingPayment] = useState(false);
 
   const title = useMemo(() => getVariantTitle(variant), [variant]);
 
@@ -264,16 +213,13 @@ export default function CryptoListPage({ variant }) {
     }
     setPaymentCoin(crypto);
     setQuantity("1");
-    setPayMethod("upi");
-    setUpiId("");
-    setCardNumber("");
-    setCardExpiry("");
-    setCardCvv("");
+    setPaymentMethod("card");
     setPaymentError("");
     setPaymentSuccess("");
   };
 
   const closePaymentModal = () => {
+    if (submittingPayment) return;
     setPaymentCoin(null);
     setPaymentError("");
     setPaymentSuccess("");
@@ -291,19 +237,6 @@ export default function CryptoListPage({ variant }) {
     const qty = Number(quantity);
     if (!Number.isFinite(qty) || qty <= 0)
       return "Please enter a valid quantity.";
-
-    if (payMethod === "upi") {
-      const normalizedUpi = upiId.trim();
-      if (!normalizedUpi) return "Please enter your UPI ID.";
-      if (!normalizedUpi.includes("@")) return "Please enter a valid UPI ID.";
-      return "";
-    }
-
-    const digits = cardNumber.replace(/\s+/g, "");
-    if (!/^\d{16}$/.test(digits)) return "Card number must be 16 digits.";
-    if (!/^(0[1-9]|1[0-2])\/\d{2}$/.test(cardExpiry))
-      return "Expiry must be in MM/YY format.";
-    if (!/^\d{3}$/.test(cardCvv)) return "CVV must be 3 digits.";
     return "";
   };
 
@@ -319,14 +252,22 @@ export default function CryptoListPage({ variant }) {
     }
 
     const symbol = (paymentCoin?.symbol || "").toUpperCase();
+    const name = paymentCoin?.name || symbol;
     const qty = Number(quantity);
     const price = parseFloat(paymentCoin.price_usd) || 0;
 
     try {
-      const result = await buyCrypto(symbol, qty, price);
+      setSubmittingPayment(true);
+      const result = await buyCryptoWithRazorpay({
+        cryptoType: symbol,
+        cryptoName: name,
+        amount: qty,
+        price,
+        preferredMethod: paymentMethod,
+      });
       if (result.success) {
         setPaymentSuccess(
-          `Purchase successful! You bought ${qty} ${symbol} for $${totalAmount.toFixed(2)}.`,
+          `Payment successful via ${paymentMethod === "paylater" ? "Pay Later" : "Card"}! You bought ${qty} ${symbol} for $${totalAmount.toFixed(2)}.`,
         );
         setTimeout(() => {
           closePaymentModal();
@@ -336,6 +277,8 @@ export default function CryptoListPage({ variant }) {
       }
     } catch (error) {
       setPaymentError("Network error. Please try again.");
+    } finally {
+      setSubmittingPayment(false);
     }
   };
 
@@ -674,91 +617,47 @@ export default function CryptoListPage({ variant }) {
                 />
               </div>
 
+              <div className="rounded-md border border-blue-800 bg-blue-950/40 px-3 py-3 text-sm text-blue-100">
+                Choose a payment method below, then Razorpay checkout will open with that method preselected.
+              </div>
+              <div>
+                <p className="mb-2 text-sm font-medium text-gray-300">
+                  Payment method
+                </p>
               <div className="grid grid-cols-2 gap-2">
                 <button
                   type="button"
-                  onClick={() => setPayMethod("upi")}
+                  onClick={() => setPaymentMethod("card")}
+                  aria-pressed={paymentMethod === "card"}
                   className={`px-3 py-2 rounded-md text-sm font-medium border ${
-                    payMethod === "upi"
+                    paymentMethod === "card"
                       ? "bg-blue-600 border-blue-600 text-white"
                       : "bg-gray-800 border-gray-700 text-gray-300 hover:bg-gray-700"
                   }`}
                 >
-                  Pay with UPI
+                  Card
                 </button>
                 <button
                   type="button"
-                  onClick={() => setPayMethod("card")}
+                  onClick={() => setPaymentMethod("paylater")}
                   className={`px-3 py-2 rounded-md text-sm font-medium border ${
-                    payMethod === "card"
+                    paymentMethod === "paylater"
                       ? "bg-blue-600 border-blue-600 text-white"
                       : "bg-gray-800 border-gray-700 text-gray-300 hover:bg-gray-700"
                   }`}
                 >
-                  Pay with Card
+                  Pay Later
                 </button>
               </div>
-
-              {payMethod === "upi" ? (
-                <div>
-                  <label className="block text-sm text-gray-300 mb-1">
-                    UPI ID
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="name@bank"
-                    value={upiId}
-                    onChange={(e) => setUpiId(e.target.value)}
-                    className="w-full px-3 py-2 rounded-md bg-gray-800 border border-gray-700 text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-              ) : (
-                <>
-                  <div>
-                    <label className="block text-sm text-gray-300 mb-1">
-                      Card Number
-                    </label>
-                    <input
-                      type="text"
-                      placeholder="1234 5678 9012 3456"
-                      value={cardNumber}
-                      onChange={(e) => setCardNumber(e.target.value)}
-                      className="w-full px-3 py-2 rounded-md bg-gray-800 border border-gray-700 text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                  </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="block text-sm text-gray-300 mb-1">
-                        Expiry
-                      </label>
-                      <input
-                        type="text"
-                        placeholder="MM/YY"
-                        value={cardExpiry}
-                        onChange={(e) => setCardExpiry(e.target.value)}
-                        className="w-full px-3 py-2 rounded-md bg-gray-800 border border-gray-700 text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm text-gray-300 mb-1">
-                        CVV
-                      </label>
-                      <input
-                        type="password"
-                        placeholder="123"
-                        value={cardCvv}
-                        onChange={(e) => setCardCvv(e.target.value)}
-                        className="w-full px-3 py-2 rounded-md bg-gray-800 border border-gray-700 text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      />
-                    </div>
-                  </div>
-                </>
-              )}
+              </div>
 
               <div className="rounded-md bg-gray-800 border border-gray-700 px-3 py-2 text-sm text-gray-200">
                 Total:{" "}
                 <span className="font-semibold">${totalAmount.toFixed(2)}</span>
               </div>
+              <p className="text-xs text-gray-500">
+                Checkout amount is charged in INR using your backend `USD_TO_INR_RATE` setting. `Pay Later` appears only if it is enabled on your Razorpay account.
+              </p>
 
               {paymentError ? (
                 <p className="text-sm text-red-400">{paymentError}</p>
@@ -769,9 +668,10 @@ export default function CryptoListPage({ variant }) {
 
               <button
                 type="submit"
-                className="w-full py-2 rounded-md bg-green-600 text-white font-semibold hover:bg-green-700"
+                disabled={submittingPayment}
+                className="w-full py-2 rounded-md bg-green-600 text-white font-semibold hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                Pay Now
+                {submittingPayment ? "Opening Razorpay..." : "Pay with Razorpay"}
               </button>
             </form>
           </div>

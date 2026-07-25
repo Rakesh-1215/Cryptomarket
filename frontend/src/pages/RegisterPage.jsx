@@ -39,8 +39,10 @@ export default function RegisterPage() {
       );
 
       if (result.success) {
-        alert("Registration successful! Please login.");
-        navigate("/login");
+        alert("Registration successful! Check your email for the OTP.");
+        navigate("/verify-email", {
+          state: { email: result.email || email.trim().toLowerCase() },
+        });
       } else {
         alert(result.error || "Registration failed");
       }
