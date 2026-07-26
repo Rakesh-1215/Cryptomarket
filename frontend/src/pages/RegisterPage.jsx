@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { toast } from "react-toastify";
 import { useAuth } from "../contexts/AuthContext.jsx";
 
 export default function RegisterPage() {
@@ -11,21 +12,27 @@ export default function RegisterPage() {
   const { register } = useAuth();
   const navigate = useNavigate();
 
+  const handleVerifyEmailClick = () => {
+    navigate("/verify-email", {
+      state: { email: email.trim().toLowerCase() },
+    });
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
 
     if (!username.trim() || !email.trim() || !password || !confirmPassword) {
-      alert("Please fill in all fields.");
+      toast.error("Please fill in all fields.");
       return;
     }
 
     if (password.length < 6) {
-      alert("Password must be at least 6 characters.");
+      toast.error("Password must be at least 6 characters.");
       return;
     }
 
     if (password !== confirmPassword) {
-      alert("Passwords do not match.");
+      toast.error("Passwords do not match.");
       return;
     }
 
@@ -39,15 +46,15 @@ export default function RegisterPage() {
       );
 
       if (result.success) {
-        alert("Registration successful! Check your email for the OTP.");
+        toast.success("Registration successful! Check your email for the OTP.");
         navigate("/verify-email", {
           state: { email: result.email || email.trim().toLowerCase() },
         });
       } else {
-        alert(result.error || "Registration failed");
+        toast.error(result.error || "Registration failed");
       }
     } catch (error) {
-      alert("Network error. Please try again.");
+      toast.error("Network error. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -125,6 +132,14 @@ export default function RegisterPage() {
             Sign in
           </Link>
         </p>
+
+        <button
+          type="button"
+          onClick={handleVerifyEmailClick}
+          className="w-full mt-4 border border-blue-500/60 text-blue-300 hover:text-white hover:bg-blue-500/10 font-medium py-2 px-4 rounded-md transition-colors"
+        >
+          Verify Email
+        </button>
       </div>
     </div>
   );

@@ -538,7 +538,7 @@ The Python ML pipeline is triggered through the Node backend and follows this fl
 
 1. Fetch historical market data from CoinGecko.
 2. Build a tabular dataset with prices, volume, moving averages, returns, and volatility features.
-3. Train multiple models on demand: Random Forest, XGBoost, LSTM, and Prophet.
+3. Train multiple models on demand: Random Forest and XGBoost.
 4. Aggregate model predictions into an ensemble signal.
 5. Produce risk scoring, recommendation summaries, and explainable AI metadata.
 6. Return the final forecast payload to the MERN application.

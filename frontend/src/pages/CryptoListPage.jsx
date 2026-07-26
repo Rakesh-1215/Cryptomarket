@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { toast } from "react-toastify";
 import {
   formatNumber,
   formatPrice,
@@ -207,7 +208,7 @@ export default function CryptoListPage({ variant }) {
   const onBuyClick = (e, crypto) => {
     e.stopPropagation();
     if (!isAuthenticated) {
-      alert("Please login first to buy this coin.");
+      toast.error("Please login first to buy this coin.");
       navigate("/login");
       return;
     }

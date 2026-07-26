@@ -1,8 +1,8 @@
 """
-Cryptocurrency price prediction using LSTM, XGBoost, Random Forest, and Prophet.
+Cryptocurrency price prediction using XGBoost and Random Forest.
 
 Usage:
-  python predict.py --coin-id bitcoin --symbol BTC --days 90
+    python predict.py --coin-id bitcoin --symbol BTC --days 90
 """
 
 from __future__ import annotations
@@ -25,7 +25,6 @@ except ImportError:
     XGBRegressor = None
 
 from fetch_historical import fetch_market_chart, iso_timestamp, latest_price
-from lstm_model import train_lstm
 from signals import (
     attach_model_signal,
     build_ensemble_probabilities,
@@ -36,7 +35,6 @@ from signals import (
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
 
-LOOKBACK = 14
 FORECAST_HORIZON = 1
 
 
@@ -335,63 +333,6 @@ def predict_xgboost(frame: pd.DataFrame, current_price: float) -> dict[str, Any]
     return predict_tree_model("xgboost", model, frame, current_price)
 
 
-def predict_lstm(frame: pd.DataFrame, current_price: float) -> dict[str, Any]:
-    prices = frame["price"].to_numpy(dtype=np.float64)
-    _, rmse, mae, predicted = train_lstm(prices, lookback=LOOKBACK)
-    predicted = max(float(predicted), 0.0)
-
-    return {
-        "model": "lstm",
-        "predictedPrice": round(predicted, 4),
-        "changePercent": change_percent(current_price, predicted),
-        "direction": direction_label(current_price, predicted),
-        "metrics": {"rmse": round(rmse, 4), "mae": round(mae, 4)},
-    }
-
-
-def predict_prophet(frame: pd.DataFrame, current_price: float) -> dict[str, Any]:
-    try:
-        from prophet import Prophet
-    except ImportError as exc:
-        raise RuntimeError(
-            "Prophet is not installed. Run: pip install -r ml/requirements.txt"
-        ) from exc
-
-    prophet_frame = frame[["date", "price"]].rename(columns={"date": "ds", "price": "y"})
-    prophet_frame["ds"] = prophet_frame["ds"].dt.tz_localize(None)
-
-    split_idx = max(20, int(len(prophet_frame) * 0.8))
-    train = prophet_frame.iloc[:split_idx]
-    test = prophet_frame.iloc[split_idx:]
-
-    model = Prophet(
-        daily_seasonality=False,
-        weekly_seasonality=True,
-        yearly_seasonality=False,
-        changepoint_prior_scale=0.05,
-    )
-    model.fit(train)
-
-    if len(test):
-        forecast = model.predict(test[["ds"]])
-        metrics = evaluate_regression(test["y"].to_numpy(), forecast["yhat"].to_numpy())
-    else:
-        metrics = {"rmse": 0.0, "mae": 0.0}
-
-    future = model.make_future_dataframe(periods=FORECAST_HORIZON, freq="D")
-    future_forecast = model.predict(future)
-    predicted = float(future_forecast["yhat"].iloc[-1])
-    predicted = max(predicted, 0.0)
-
-    return {
-        "model": "prophet",
-        "predictedPrice": round(predicted, 4),
-        "changePercent": change_percent(current_price, predicted),
-        "direction": direction_label(current_price, predicted),
-        "metrics": metrics,
-    }
-
-
 def _recommendation_summary(ensemble: dict[str, Any]) -> str:
     signal = ensemble.get("signal", "Hold")
     confidence = ensemble.get("confidence", 0)
@@ -450,10 +391,8 @@ def run_prediction(coin_id: str, symbol: str, days: int) -> dict[str, Any]:
     ]
 
     model_runners = [
-        ("lstm", predict_lstm),
         ("xgboost", predict_xgboost),
         ("randomForest", predict_random_forest),
-        ("prophet", predict_prophet),
     ]
 
     models: dict[str, Any] = {}
@@ -487,7 +426,6 @@ def run_prediction(coin_id: str, symbol: str, days: int) -> dict[str, Any]:
         "symbol": symbol.upper(),
         "currentPrice": round(current_price, 4),
         "historicalDays": days,
-        "lookbackDays": LOOKBACK,
         "forecastHorizonDays": FORECAST_HORIZON,
         "history": history,
         "models": models,

@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { toast } from "react-toastify";
 import { useAuth } from "../contexts/AuthContext.jsx";
 
 export default function LoginPage() {
@@ -24,10 +25,10 @@ export default function LoginPage() {
           },
         });
       } else {
-        alert(result.error || "Login failed");
+        toast.error(result.error || "Login failed");
       }
     } catch (error) {
-      alert("Network error. Please try again.");
+      toast.error("Network error. Please try again.");
     } finally {
       setLoading(false);
     }

@@ -1,6 +1,7 @@
 import React from "react";
 import { NavLink } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext.jsx";
+import BrandLogo from "./BrandLogo.jsx";
 
 function linkClass({ isActive }) {
   return isActive
@@ -15,15 +16,8 @@ export default function Navbar() {
     <nav className="bg-black shadow-md">
       <div className="max-w-7xl mx-auto px-4">
         <div className="flex justify-between items-center h-16">
-          <NavLink to="/" className="flex items-center space-x-2">
-            <img
-              src="https://dappgambl.com/wp-content/uploads/2023/04/crypto-market.jpg"
-              alt="Logo"
-              className="h-8 w-8 object-cover rounded-full"
-            />
-            <span className="text-xl font-bold text-blue-600">
-              Crypto Market
-            </span>
+          <NavLink to="/" className="flex items-center">
+            <BrandLogo/>
           </NavLink>
 
           <div className="hidden md:flex space-x-6 font-medium">

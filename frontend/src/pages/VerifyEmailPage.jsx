@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
+import { toast } from "react-toastify";
 import { useAuth } from "../contexts/AuthContext.jsx";
 
 export default function VerifyEmailPage() {
@@ -21,7 +22,7 @@ export default function VerifyEmailPage() {
         ? await verifyLoginOtp(email.trim().toLowerCase(), otp.trim())
         : await verifyEmail(email.trim().toLowerCase(), otp.trim());
       if (result.success) {
-        alert(
+        toast.success(
           result.message ||
             (isLoginVerification
               ? "Login verified successfully."
@@ -29,10 +30,10 @@ export default function VerifyEmailPage() {
         );
         navigate(isLoginVerification ? "/" : "/login");
       } else {
-        alert(result.error || "Verification failed");
+        toast.error(result.error || "Verification failed");
       }
     } catch {
-      alert("Network error. Please try again.");
+      toast.error("Network error. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -40,7 +41,7 @@ export default function VerifyEmailPage() {
 
   const handleResend = async () => {
     if (!email.trim()) {
-      alert("Enter your email first.");
+      toast.error("Enter your email first.");
       return;
     }
 
@@ -48,12 +49,12 @@ export default function VerifyEmailPage() {
     try {
       const result = await resendVerificationOtp(email.trim().toLowerCase());
       if (result.success) {
-        alert(result.message || "A new OTP has been sent.");
+        toast.success(result.message || "A new OTP has been sent.");
       } else {
-        alert(result.error || "Unable to resend OTP");
+        toast.error(result.error || "Unable to resend OTP");
       }
     } catch {
-      alert("Network error. Please try again.");
+      toast.error("Network error. Please try again.");
     } finally {
       setResending(false);
     }

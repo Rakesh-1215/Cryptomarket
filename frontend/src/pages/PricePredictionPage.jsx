@@ -5,11 +5,10 @@ import {
   getChangeColor,
 } from "../utils/coinFormatting.js";
 import { buildForecastChartData } from "../utils/forecastChart.js";
+import BrandLogo from "../components/BrandLogo.jsx";
 const MODEL_LABELS = {
-  lstm: "LSTM",
   xgboost: "XGBoost",
   randomForest: "Random Forest",
-  prophet: "Prophet",
 };
 
 function predictionClass(label) {
@@ -20,6 +19,13 @@ function predictionClass(label) {
 
 function signalClass(signal) {
   return predictionClass(signal);
+}
+
+function confidenceLabel(value) {
+  const pct = Number(value) || 0;
+  if (pct >= 80) return "High";
+  if (pct >= 65) return "Medium";
+  return "Low";
 }
 
 function ConfidenceBar({ value, signal }) {
@@ -137,58 +143,65 @@ function ProbabilityPanel({ probabilities, ensemble, symbol }) {
   );
 }
 
-function SignalHero({ recommendation, ensemble, symbol }) {
+function SignalHero({ recommendation, ensemble, prediction, symbol }) {
   if (!recommendation?.signal) return null;
 
   const signal = recommendation.signal;
   const confidence = recommendation.confidence || ensemble?.confidence || 0;
+  const confidenceText = confidenceLabel(confidence);
+  const changePercent = ensemble?.changePercent ?? 0;
+  const rmse = prediction?.evaluation?.regression?.rmse;
   const votes = recommendation.votes || ensemble?.votes || {};
 
   return (
-    <section className="mt-8 rounded-xl border border-gray-800 bg-gradient-to-br from-gray-900 to-gray-950 p-6">
-      <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
+    <section className="mt-8 rounded-2xl border border-gray-800 bg-black/60 p-6 shadow-2xl shadow-black/30">
+      <div className="flex items-start justify-between gap-4">
         <div>
-          <p className="text-sm uppercase tracking-wide text-gray-500">
-            Trading signal for {symbol}
-          </p>
-          <div className="mt-2 flex flex-wrap items-center gap-3">
-            <span
-              className={`inline-flex rounded-lg border px-4 py-2 text-2xl font-bold ${signalClass(signal)}`}
-            >
-              {signal}
-            </span>
-            <span className="text-3xl font-bold text-white">{confidence}%</span>
-            <span className="text-sm text-gray-400">confidence</span>
-          </div>
-          {recommendation.summary ? (
-            <p className="mt-3 max-w-2xl text-sm text-gray-400">{recommendation.summary}</p>
-          ) : null}
-          {recommendation.probIncrease != null ? (
-            <div className="mt-4 max-w-md">
-              <ProbabilityBar
-                probIncrease={recommendation.probIncrease}
-                probDecrease={recommendation.probDecrease}
-              />
-            </div>
-          ) : null}
+          <p className="text-lg font-semibold text-white">Recommendations</p>     
         </div>
+        <span className={`inline-flex rounded-lg border px-3 py-1 text-xs font-semibold ${signalClass(signal)}`}>
+          {signal}
+        </span>
+      </div>
 
-        <div className="grid min-w-[220px] grid-cols-3 gap-3">
-          {["Buy", "Hold", "Sell"].map((voteLabel) => (
-            <div
-              key={voteLabel}
-              className={`rounded-lg border p-3 text-center ${
-                signal === voteLabel
-                  ? "border-blue-700 bg-blue-950/30"
-                  : "border-gray-800 bg-gray-900/50"
-              }`}
-            >
-              <p className="text-xs text-gray-500">{voteLabel}</p>
-              <p className="mt-1 text-xl font-bold text-white">{votes[voteLabel] ?? 0}</p>
-              <p className="text-xs text-gray-500">votes</p>
-            </div>
-          ))}
+      <div className="mt-5 rounded-2xl bg-gray-900/80 p-5 font-mono text-sm leading-7 text-gray-100">
+        <div>Signal: {signal}</div>
+        <div>
+          Predicted Change: {changePercent >= 0 ? "+" : ""}
+          {changePercent.toFixed(2)}%
         </div>
+        <div>Model Confidence: {confidenceText}</div>
+        <div>RMSE: {rmse != null ? formatPrice(rmse) : "N/A"}</div>
+      </div>
+
+      {recommendation.summary ? (
+        <p className="mt-4 max-w-3xl text-sm text-gray-400">{recommendation.summary}</p>
+      ) : null}
+
+      {recommendation.probIncrease != null ? (
+        <div className="mt-4 max-w-md">
+          <ProbabilityBar
+            probIncrease={recommendation.probIncrease}
+            probDecrease={recommendation.probDecrease}
+          />
+        </div>
+      ) : null}
+
+      <div className="mt-5 grid min-w-[220px] grid-cols-3 gap-3">
+        {["Buy", "Hold", "Sell"].map((voteLabel) => (
+          <div
+            key={voteLabel}
+            className={`rounded-lg border p-3 text-center ${
+              signal === voteLabel
+                ? "border-blue-700 bg-blue-950/30"
+                : "border-gray-800 bg-gray-900/50"
+            }`}
+          >
+            <p className="text-xs text-gray-500">{voteLabel}</p>
+            <p className="mt-1 text-xl font-bold text-white">{votes[voteLabel] ?? 0}</p>
+            <p className="text-xs text-gray-500">votes</p>
+          </div>
+        ))}
       </div>
 
       <ConfidenceBar value={confidence} signal={signal} />
@@ -384,12 +397,15 @@ export default function PricePredictionPage() {
 
   return (
     <main className="mx-auto max-w-7xl px-4 py-8">
-      <div className="mb-6 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-white">ML Price Prediction</h1>
-          <p className="mt-1 text-sm text-gray-400">
-            Buy / Sell / Hold signals, confidence scores, and increase/decrease probabilities.
-          </p>
+      <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div className="flex items-center gap-3">
+          {/* <BrandLogo /> */}
+          <div>
+            <h1 className="text-2xl font-bold text-white">ML Price Prediction</h1>
+            <p className="mt-1 text-sm text-gray-400">
+              Buy / Sell / Hold signals, confidence scores, and increase/decrease probabilities.
+            </p>
+          </div>
         </div>
         <NavLink
           to="/ai-dashboard"
@@ -456,6 +472,7 @@ export default function PricePredictionPage() {
           <SignalHero
             recommendation={prediction.recommendation}
             ensemble={prediction.ensemble}
+            prediction={prediction}
             symbol={prediction.symbol}
           />
 
@@ -544,7 +561,7 @@ export default function PricePredictionPage() {
             />
           </section>
 
-          <section className="mt-8 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <section className="mt-8 grid gap-4 md:grid-cols-2 xl:grid-cols-2">
             {Object.keys(MODEL_LABELS).map((modelKey) => (
               <ModelCard
                 key={modelKey}

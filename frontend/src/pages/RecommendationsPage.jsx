@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { NavLink } from "react-router-dom";
+import { toast } from "react-toastify";
 import { useAuth } from "../contexts/AuthContext.jsx";
 import { formatPrice } from "../utils/coinFormatting.js";
 
@@ -68,7 +69,7 @@ export default function RecommendationsPage() {
 
   const handleBuy = async (coin) => {
     if (!isAuthenticated) {
-      alert("Please login first to buy this coin.");
+      toast.error("Please login first to buy this coin.");
       return;
     }
     setPaymentCoin(coin);
