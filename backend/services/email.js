@@ -100,14 +100,14 @@ async function sendViaResend({ to, subject, html, text, from }) {
 }
 
 /**
- * Send email via Brevo (Sendinblue) HTTP REST API (Over HTTPS port 443 - works on Render)
+ * Send email via Brevo (Sendinblue) HTTP REST API (Over HTTPS port 443 - works on Render without domain lock)
  */
 async function sendViaBrevo({ to, subject, html, text, from }) {
   const apiKey = String(process.env.BREVO_API_KEY || "").trim();
   if (!apiKey) return null;
 
   const fetchClient = await getFetch();
-  const senderEmail = process.env.BREVO_FROM_EMAIL || process.env.SMTP_USER || "noreply@cryptomarket.app";
+  const senderEmail = process.env.BREVO_FROM_EMAIL || process.env.SMTP_USER || "cryptomarket.auth@gmail.com";
   const senderName = process.env.BREVO_FROM_NAME || "Cryptomarket";
 
   const response = await fetchClient("https://api.brevo.com/v3/smtp/email", {
@@ -128,9 +128,12 @@ async function sendViaBrevo({ to, subject, html, text, from }) {
 
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(data.message || `Brevo error HTTP ${response.status}`);
+    const errorMsg = data.message || `Brevo HTTP ${response.status}`;
+    console.error(`[Brevo Error] ${errorMsg}`);
+    throw new Error(errorMsg);
   }
 
+  console.log(`[Brevo Success] Email delivered to ${to} (Message ID: ${data.messageId})`);
   return { sent: true, provider: "brevo", id: data.messageId };
 }
 
@@ -163,28 +166,28 @@ async function sendViaSmtp({ to, subject, html, text, from }) {
 
 /**
  * Unified email dispatcher:
- * 1. Resend HTTP API (HTTPS)
- * 2. Brevo HTTP API (HTTPS)
+ * 1. Brevo HTTP API (HTTPS - Send to ANY email address)
+ * 2. Resend HTTP API (HTTPS)
  * 3. SMTP (TCP port 587/465)
  */
 async function sendMailUnified({ to, subject, html, text, from }) {
-  // Provider 1: Resend HTTP API (Best for Render)
-  if (process.env.RESEND_API_KEY) {
-    try {
-      const res = await sendViaResend({ to, subject, html, text, from });
-      if (res && res.sent) return res;
-    } catch (err) {
-      console.error("[Email] Resend API attempt failed:", err.message);
-    }
-  }
-
-  // Provider 2: Brevo HTTP API
+  // Provider 1: Brevo HTTP API (Best for sending to ANY user without custom domain requirement)
   if (process.env.BREVO_API_KEY) {
     try {
       const res = await sendViaBrevo({ to, subject, html, text, from });
       if (res && res.sent) return res;
     } catch (err) {
       console.error("[Email] Brevo API attempt failed:", err.message);
+    }
+  }
+
+  // Provider 2: Resend HTTP API
+  if (process.env.RESEND_API_KEY) {
+    try {
+      const res = await sendViaResend({ to, subject, html, text, from });
+      if (res && res.sent) return res;
+    } catch (err) {
+      console.error("[Email] Resend API attempt failed:", err.message);
     }
   }
 
