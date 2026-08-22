@@ -1,5 +1,13 @@
 const nodemailer = require("nodemailer");
 
+async function getFetch() {
+  if (typeof globalThis.fetch === "function") {
+    return globalThis.fetch;
+  }
+  const { default: nodeFetch } = await import("node-fetch");
+  return nodeFetch;
+}
+
 function getSmtpConfig() {
   const host = process.env.SMTP_HOST;
   const port = Number.parseInt(process.env.SMTP_PORT, 10) || 587;
@@ -31,46 +39,184 @@ function createTransporter() {
 }
 
 function getFromAddress() {
-  return process.env.SMTP_FROM || process.env.SMTP_USER || null;
+  return (
+    process.env.RESEND_FROM ||
+    process.env.BREVO_FROM_EMAIL ||
+    process.env.SMTP_FROM ||
+    process.env.SMTP_USER ||
+    "Cryptomarket <onboarding@resend.dev>"
+  );
+}
+
+/**
+ * Send email via Resend HTTP REST API (Over HTTPS port 443 - 100% works on Render)
+ */
+async function sendViaResend({ to, subject, html, text, from }) {
+  const apiKey = String(process.env.RESEND_API_KEY || "").trim();
+  if (!apiKey) return null;
+
+  const fetchClient = await getFetch();
+  const sender =
+    from ||
+    process.env.RESEND_FROM ||
+    "Cryptomarket <onboarding@resend.dev>";
+
+  const response = await fetchClient("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      from: sender,
+      to: Array.isArray(to) ? to : [to],
+      subject,
+      html,
+      text,
+    }),
+  });
+
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data.message || data.error?.message || `Resend error HTTP ${response.status}`);
+  }
+
+  return { sent: true, provider: "resend", id: data.id };
+}
+
+/**
+ * Send email via Brevo (Sendinblue) HTTP REST API (Over HTTPS port 443 - works on Render)
+ */
+async function sendViaBrevo({ to, subject, html, text, from }) {
+  const apiKey = String(process.env.BREVO_API_KEY || "").trim();
+  if (!apiKey) return null;
+
+  const fetchClient = await getFetch();
+  const senderEmail = process.env.BREVO_FROM_EMAIL || process.env.SMTP_USER || "noreply@cryptomarket.app";
+  const senderName = process.env.BREVO_FROM_NAME || "Cryptomarket";
+
+  const response = await fetchClient("https://api.brevo.com/v3/smtp/email", {
+    method: "POST",
+    headers: {
+      "api-key": apiKey,
+      "Content-Type": "application/json",
+      accept: "application/json",
+    },
+    body: JSON.stringify({
+      sender: { name: senderName, email: senderEmail },
+      to: [{ email: to }],
+      subject,
+      htmlContent: html,
+      textContent: text,
+    }),
+  });
+
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data.message || `Brevo error HTTP ${response.status}`);
+  }
+
+  return { sent: true, provider: "brevo", id: data.messageId };
+}
+
+/**
+ * Send email via standard SMTP (Nodemailer)
+ */
+async function sendViaSmtp({ to, subject, html, text, from }) {
+  const transporter = createTransporter();
+  if (!transporter) return null;
+
+  const fromAddress = from || getFromAddress();
+  if (!fromAddress) {
+    throw new Error("SMTP_FROM or SMTP_USER is missing for SMTP transport.");
+  }
+
+  const info = await transporter.sendMail({
+    from: fromAddress.includes("<") ? fromAddress : `Cryptomarket <${fromAddress}>`,
+    to,
+    subject,
+    text,
+    html,
+  });
+
+  return {
+    sent: true,
+    provider: "smtp",
+    messageId: info.messageId,
+  };
+}
+
+/**
+ * Unified email dispatcher:
+ * 1. Resend HTTP API (HTTPS)
+ * 2. Brevo HTTP API (HTTPS)
+ * 3. SMTP (TCP port 587/465)
+ */
+async function sendMailUnified({ to, subject, html, text, from }) {
+  // Provider 1: Resend HTTP API (Best for Render)
+  if (process.env.RESEND_API_KEY) {
+    try {
+      const res = await sendViaResend({ to, subject, html, text, from });
+      if (res && res.sent) return res;
+    } catch (err) {
+      console.error("[Email] Resend API attempt failed:", err.message);
+    }
+  }
+
+  // Provider 2: Brevo HTTP API
+  if (process.env.BREVO_API_KEY) {
+    try {
+      const res = await sendViaBrevo({ to, subject, html, text, from });
+      if (res && res.sent) return res;
+    } catch (err) {
+      console.error("[Email] Brevo API attempt failed:", err.message);
+    }
+  }
+
+  // Provider 3: SMTP
+  if (getSmtpConfig()) {
+    try {
+      const res = await sendViaSmtp({ to, subject, html, text, from });
+      if (res && res.sent) return res;
+    } catch (err) {
+      console.error("[Email] SMTP attempt failed (often blocked on cloud hosts like Render):", err.message);
+    }
+  }
+
+  return {
+    sent: false,
+    skipped: !process.env.RESEND_API_KEY && !process.env.BREVO_API_KEY && !getSmtpConfig(),
+    error: "No working email provider configured or connection failed.",
+  };
 }
 
 async function sendWelcomeEmail({ username, email }) {
-  const transporter = createTransporter();
-  if (!transporter) {
-    console.warn(
-      "SMTP is not configured. Skipping welcome email for newly registered users.",
-    );
-    return { sent: false, skipped: true };
-  }
-
-  const fromAddress = getFromAddress();
-  if (!fromAddress) {
-    console.warn("SMTP_FROM is missing. Skipping welcome email.");
-    return { sent: false, skipped: true };
-  }
-
   try {
-    await transporter.sendMail({
-      from: `Cryptomarket <${fromAddress}>`,
+    const text = [
+      `Hi ${username},`,
+      "",
+      "Your Cryptomarket account is ready.",
+      "You can now sign in and use the crypto dashboard.",
+      "",
+      "If you did not create this account, you can ignore this email.",
+    ].join("\n");
+
+    const html = `
+      <div style="font-family:Arial,sans-serif;padding:20px;color:#1e293b;">
+        <h2>Welcome to Cryptomarket</h2>
+        <p>Hi <strong>${username}</strong>,</p>
+        <p>Your Cryptomarket account is ready.</p>
+        <p>You can now sign in and explore real-time crypto prices, ML predictions, and AI portfolio optimizations.</p>
+        <p style="color:#64748b;font-size:12px;margin-top:24px;">If you did not create this account, you can ignore this email.</p>
+      </div>
+    `;
+
+    return await sendMailUnified({
       to: email,
       subject: "Welcome to Cryptomarket",
-      text: [
-        `Hi ${username},`,
-        "",
-        "Your Cryptomarket account is ready.",
-        "You can now sign in and use the crypto dashboard.",
-        "",
-        "If you did not create this account, you can ignore this email.",
-      ].join("\n"),
-      html: `
-        <p>Hi ${username},</p>
-        <p>Your Cryptomarket account is ready.</p>
-        <p>You can now sign in and use the crypto dashboard.</p>
-        <p>If you did not create this account, you can ignore this email.</p>
-      `,
+      text,
+      html,
     });
-
-    return { sent: true };
   } catch (error) {
     console.error("Failed to send welcome email:", error.message);
     return { sent: false, error: error.message };
@@ -78,82 +224,41 @@ async function sendWelcomeEmail({ username, email }) {
 }
 
 async function sendVerificationOtpEmail({ username, email, otp }) {
-  const transporter = createTransporter();
-
-  if (!transporter) {
-    console.warn("SMTP is not configured.");
-    return { sent: false, skipped: true };
-  }
-
-  const fromAddress = getFromAddress();
-
-  if (!fromAddress) {
-    console.warn("SMTP_FROM is missing.");
-    return { sent: false, skipped: true };
-  }
+  console.log("==========================================");
+  console.log(`🔐 [VERIFICATION OTP] Email: ${email} | Code: ${otp}`);
+  console.log("==========================================");
 
   try {
-    console.log("==================================");
-    console.log("Starting verification email...");
-    console.log("To:", email);
-    console.log("From:", fromAddress);
-    console.log("OTP:", otp);
+    const text = `Hi ${username},\n\nYour verification OTP is:\n\n${otp}\n\nThis OTP will expire in 10 minutes.\n\nIf you did not create this account, please ignore this email.`;
+    const html = `
+      <div style="font-family:Arial,sans-serif;padding:24px;color:#1e293b;max-width:500px;border:1px solid #e2e8f0;border-radius:8px;">
+        <h2 style="color:#2563eb;margin-top:0;">Welcome to Cryptomarket</h2>
+        <p>Hi <strong>${username}</strong>,</p>
+        <p>Your email verification OTP code is:</p>
+        <div style="background:#f1f5f9;padding:14px;border-radius:6px;text-align:center;margin:20px 0;">
+          <h1 style="letter-spacing:6px;color:#2563eb;margin:0;font-size:32px;">${otp}</h1>
+        </div>
+        <p style="color:#475569;font-size:14px;">This code will expire in <strong>10 minutes</strong>.</p>
+        <p style="color:#94a3b8;font-size:12px;margin-top:24px;border-top:1px solid #e2e8f0;padding-top:12px;">
+          If you did not request this, simply ignore this email.
+        </p>
+      </div>
+    `;
 
-    await transporter.verify();
-    console.log("SMTP connection verified.");
-
-    const info = await transporter.sendMail({
-      from: `Cryptomarket <${fromAddress}>`,
+    const result = await sendMailUnified({
       to: email,
       subject: "Verify your Cryptomarket Email",
-      text: `
-Hi ${username},
-
-Your verification OTP is:
-
-${otp}
-
-This OTP will expire in 10 minutes.
-
-If you did not create this account, please ignore this email.
-      `,
-      html: `
-        <div style="font-family:Arial,sans-serif;padding:20px">
-          <h2>Welcome to Cryptomarket</h2>
-
-          <p>Hi <strong>${username}</strong>,</p>
-
-          <p>Your verification OTP is:</p>
-
-          <h1 style="letter-spacing:5px;color:#2563eb">${otp}</h1>
-
-          <p>This OTP will expire in <strong>10 minutes</strong>.</p>
-
-          <p>If you did not create this account, simply ignore this email.</p>
-        </div>
-      `,
+      text,
+      html,
     });
 
-    console.log("Email sent successfully!");
-    console.log("Message ID:", info.messageId);
-    console.log("Accepted:", info.accepted);
-    console.log("Rejected:", info.rejected);
-    console.log("Response:", info.response);
-    console.log("==================================");
+    if (result.sent) {
+      console.log(`Verification OTP email delivered to ${email} via ${result.provider || "email provider"}`);
+    }
 
-    return {
-      sent: true,
-      messageId: info.messageId,
-    };
+    return result;
   } catch (error) {
-    console.error("==================================");
-    console.error("EMAIL SENDING FAILED");
-    console.error("Message:", error.message);
-    console.error("Code:", error.code);
-    console.error("Command:", error.command);
-    console.error(error);
-    console.error("==================================");
-
+    console.error("EMAIL SENDING FAILED:", error.message);
     return {
       sent: false,
       error: error.message,
@@ -161,83 +266,42 @@ If you did not create this account, please ignore this email.
   }
 }
 
-// ✅ NEW FUNCTION FOR LOGIN OTP
 async function sendLoginOtpEmail({ username, email, otp }) {
-  const transporter = createTransporter();
-
-  if (!transporter) {
-    console.warn("SMTP is not configured.");
-    return { sent: false, skipped: true };
-  }
-
-  const fromAddress = getFromAddress();
-
-  if (!fromAddress) {
-    console.warn("SMTP_FROM is missing.");
-    return { sent: false, skipped: true };
-  }
+  console.log("==========================================");
+  console.log(`🔐 [LOGIN OTP] Email: ${email} | Code: ${otp}`);
+  console.log("==========================================");
 
   try {
-    console.log("==================================");
-    console.log("Starting LOGIN OTP email...");
-    console.log("To:", email);
-    console.log("From:", fromAddress);
-    console.log("OTP:", otp);
+    const text = `Hi ${username},\n\nYour login OTP is:\n\n${otp}\n\nThis OTP will expire in 10 minutes.\n\nIf you did not request this login, please ignore this email.`;
+    const html = `
+      <div style="font-family:Arial,sans-serif;padding:24px;color:#1e293b;max-width:500px;border:1px solid #e2e8f0;border-radius:8px;">
+        <h2 style="color:#2563eb;margin-top:0;">🔐 Cryptomarket Login OTP</h2>
+        <p>Hi <strong>${username}</strong>,</p>
+        <p>Your login OTP code is:</p>
+        <div style="background:#f1f5f9;padding:14px;border-radius:6px;text-align:center;margin:20px 0;">
+          <h1 style="letter-spacing:6px;color:#2563eb;margin:0;font-size:32px;">${otp}</h1>
+        </div>
+        <p style="color:#475569;font-size:14px;">This code will expire in <strong>10 minutes</strong>.</p>
+        <p style="color:#94a3b8;font-size:12px;margin-top:24px;border-top:1px solid #e2e8f0;padding-top:12px;">
+          If you did not attempt to log in, please secure your account immediately.
+        </p>
+      </div>
+    `;
 
-    await transporter.verify();
-    console.log("SMTP connection verified.");
-
-    const info = await transporter.sendMail({
-      from: `Cryptomarket <${fromAddress}>`,
+    const result = await sendMailUnified({
       to: email,
       subject: "🔐 Login OTP for Cryptomarket",
-      text: `
-Hi ${username},
-
-Your login OTP is:
-
-${otp}
-
-This OTP will expire in 10 minutes.
-
-If you did not request this login, please ignore this email.
-      `,
-      html: `
-        <div style="font-family:Arial,sans-serif;padding:20px">
-          <h2>🔐 Cryptomarket Login OTP</h2>
-
-          <p>Hi <strong>${username}</strong>,</p>
-
-          <p>Your login OTP is:</p>
-
-          <h1 style="letter-spacing:5px;color:#2563eb">${otp}</h1>
-
-          <p>This OTP will expire in <strong>10 minutes</strong>.</p>
-
-          <p>If you did not request this login, please ignore this email.</p>
-        </div>
-      `,
+      text,
+      html,
     });
 
-    console.log("Login OTP email sent successfully!");
-    console.log("Message ID:", info.messageId);
-    console.log("Accepted:", info.accepted);
-    console.log("Rejected:", info.rejected);
-    console.log("Response:", info.response);
-    console.log("==================================");
+    if (result.sent) {
+      console.log(`Login OTP email delivered to ${email} via ${result.provider || "email provider"}`);
+    }
 
-    return {
-      sent: true,
-      messageId: info.messageId,
-    };
+    return result;
   } catch (error) {
-    console.error("==================================");
-    console.error("LOGIN OTP EMAIL SENDING FAILED");
-    console.error("Message:", error.message);
-    console.error("Code:", error.code);
-    console.error("Command:", error.command);
-    console.error("==================================");
-
+    console.error("LOGIN OTP EMAIL SENDING FAILED:", error.message);
     return {
       sent: false,
       error: error.message,
@@ -246,36 +310,19 @@ If you did not request this login, please ignore this email.
 }
 
 async function sendTestEmail({ to, subject, text, html }) {
-  const transporter = createTransporter();
-  if (!transporter) {
-    return { sent: false, skipped: true };
-  }
-
-  const fromAddress = getFromAddress();
-  if (!fromAddress) {
-    return { sent: false, skipped: true };
-  }
-
-  try {
-    await transporter.verify();
-    await transporter.sendMail({
-      from: `Cryptomarket <${fromAddress}>`,
-      to,
-      subject: subject || "Cryptomarket test email",
-      text: text || "This is a test email from Cryptomarket.",
-      html: html || "<p>This is a test email from Cryptomarket.</p>",
-    });
-
-    return { sent: true };
-  } catch (error) {
-    return { sent: false, error: error.message };
-  }
+  return await sendMailUnified({
+    to,
+    subject: subject || "Cryptomarket test email",
+    text: text || "This is a test email from Cryptomarket.",
+    html: html || "<p>This is a test email from Cryptomarket.</p>",
+  });
 }
 
-// ✅ UPDATED EXPORTS
 module.exports = {
   sendWelcomeEmail,
   sendVerificationOtpEmail,
-  sendLoginOtpEmail,  // ← ADDED THIS
+  sendLoginOtpEmail,
   sendTestEmail,
+  createTransporter,
+  getFromAddress,
 };

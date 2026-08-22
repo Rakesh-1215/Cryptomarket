@@ -1,9 +1,10 @@
 const { spawn } = require("child_process");
 const path = require("path");
+const { resolvePythonBin } = require("./pythonRuntime");
 
 const ML_DIR = path.join(__dirname, "..", "ml");
 const OPTIMIZE_SCRIPT = path.join(ML_DIR, "portfolio_optimize.py");
-const PYTHON_BIN = process.env.PYTHON_BIN || "python";
+const PYTHON_BIN = resolvePythonBin();
 
 const PORTFOLIO_UNIVERSE = [
   { symbol: "BTC", name: "Bitcoin", coinId: "bitcoin" },

@@ -14,7 +14,7 @@ import VerifyEmailPage from "./pages/VerifyEmailPage.jsx";
 export default function App() {
   return (
     <AuthProvider>
-      <div className="min-h-screen bg-black text-gray-100">
+      <div className="min-h-screen bg-black text-gray-100 pt-16">
         <Navbar />
         <Routes>
           <Route path="/" element={<CryptoListPage variant="top" />} />

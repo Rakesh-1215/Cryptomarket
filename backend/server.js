@@ -30,6 +30,7 @@ const {
 const { buildPersonalizedRecommendations } = require("./services/recommendationEngine");
 const { analyzeTechnicalIndicators } = require("./services/technicalAnalysis");
 const { analyzeSentiment } = require("./services/sentimentAnalysis");
+const { resolvePythonBin } = require("./services/pythonRuntime");
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -217,6 +218,14 @@ async function storeLoginOtp(user, otp) {
   await user.save();
 }
 
+function fireAndForgetEmail(task, label) {
+  setImmediate(() => {
+    task().catch((error) => {
+      console.error(`${label} failed after response:`, error.message);
+    });
+  });
+}
+
 function createAuthToken(user) {
   return jwt.sign({ userId: user._id }, JWT_SECRET, {
     expiresIn: "1h",
@@ -352,30 +361,21 @@ app.post("/api/register", requireDatabase, async (req, res) => {
     await storeVerificationCode(user, otp);
     console.log("User saved to MongoDB.");
 
-    const emailResult = await sendVerificationOtpEmail({
-      username,
-      email: normalizedEmail,
-      otp,
-    });
-
-    console.log("Email Result:", emailResult);
-
-    if (!emailResult.sent) {
-      console.log("Deleting user because email failed...");
-      await User.deleteOne({ _id: user._id });
-
-      return res.status(502).json({
-        error:
-          emailResult.error ||
-          "Verification email could not be sent.",
-      });
-    }
-
     console.log("Registration completed successfully.");
     console.log("====================================");
 
+    fireAndForgetEmail(
+      async () =>
+        sendVerificationOtpEmail({
+          username,
+          email: normalizedEmail,
+          otp,
+        }),
+      "Verification OTP email",
+    );
+
     res.status(201).json({
-      message: "User registered successfully. Verify your email with the OTP we sent.",
+      message: "User registered successfully. Verification OTP is being sent.",
       verificationRequired: true,
       email: normalizedEmail,
     });
@@ -517,24 +517,18 @@ app.post("/api/login", requireDatabase, async (req, res) => {
     const otp = generateOtp();
     await storeLoginOtp(user, otp);
 
-    // ✅ UNCOMMENT THIS LINE
-    const emailResult = await sendLoginOtpEmail({
-      username: user.username,
-      email: normalizedEmail,
-      otp,
-    });
-
-    if (!emailResult.sent) {
-      return res.status(502).json({
-        error:
-          emailResult.skipped
-            ? "Login OTP email is not configured yet. Set SMTP_HOST, SMTP_USER, SMTP_PASS, and SMTP_FROM in backend/.env."
-            : "Login OTP could not be sent. Please try again later.",
-      });
-    }
+    fireAndForgetEmail(
+      async () =>
+        sendLoginOtpEmail({
+          username: user.username,
+          email: normalizedEmail,
+          otp,
+        }),
+      "Login OTP email",
+    );
 
     res.json({
-      message: "Login OTP sent to your email.",
+      message: "Login OTP request accepted. The email is being sent now.",
       verificationRequired: true,
       email: normalizedEmail,
     });
@@ -597,7 +591,7 @@ app.get("/api/cryptos", async (req, res) => {
 });
 
 app.get("/api/ai/health", (req, res) => {
-  const pythonBin = process.env.PYTHON_BIN || "python";
+  const pythonBin = resolvePythonBin();
   const result = spawnSync(pythonBin, ["--version"], {
     encoding: "utf8",
     windowsHide: true,

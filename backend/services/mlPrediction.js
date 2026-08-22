@@ -1,11 +1,11 @@
 const { spawn } = require("child_process");
 const fs = require("fs");
 const path = require("path");
+const { resolvePythonBin } = require("./pythonRuntime");
 
 const ML_DIR = path.join(__dirname, "..", "ml");
 const PREDICT_SCRIPT = path.join(ML_DIR, "predict.py");
-const VENV_PYTHON = path.join(__dirname, "..", ".venv", "Scripts", "python.exe");
-const PYTHON_BIN = process.env.PYTHON_BIN || (fs.existsSync(VENV_PYTHON) ? VENV_PYTHON : "python");
+const PYTHON_BIN = resolvePythonBin();
 
 const COIN_PREDICTIONS = [
   { symbol: "BTC", name: "Bitcoin", coinId: "bitcoin" },

@@ -1,7 +1,13 @@
 node_modules/
 .env
+.env.*
+backend/.env
 __pycache__/
 *.pyc
 venv/
+.venv/
 dist/
+frontend/dist/
 build/
+.DS_Store
+*.log
