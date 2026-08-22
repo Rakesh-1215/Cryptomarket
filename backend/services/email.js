@@ -56,32 +56,47 @@ async function sendViaResend({ to, subject, html, text, from }) {
   if (!apiKey) return null;
 
   const fetchClient = await getFetch();
-  const sender =
-    from ||
-    process.env.RESEND_FROM ||
-    "Cryptomarket <onboarding@resend.dev>";
+  
+  // Default to onboarding@resend.dev if custom sender is not set or unverified
+  let sender = from || process.env.RESEND_FROM || "Cryptomarket <onboarding@resend.dev>";
+  
+  async function executeResendCall(fromAddress) {
+    const response = await fetchClient("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: fromAddress,
+        to: Array.isArray(to) ? to : [to],
+        subject,
+        html,
+        text,
+      }),
+    });
 
-  const response = await fetchClient("https://api.resend.com/emails", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      from: sender,
-      to: Array.isArray(to) ? to : [to],
-      subject,
-      html,
-      text,
-    }),
-  });
-
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(data.message || data.error?.message || `Resend error HTTP ${response.status}`);
+    const data = await response.json().catch(() => ({}));
+    return { ok: response.ok, status: response.status, data };
   }
 
-  return { sent: true, provider: "resend", id: data.id };
+  let result = await executeResendCall(sender);
+
+  // If custom sender failed due to domain verification, retry with default onboarding@resend.dev
+  if (!result.ok && sender !== "Cryptomarket <onboarding@resend.dev>") {
+    console.warn(`[Resend] Custom sender "${sender}" failed (${result.data.message}). Retrying with "Cryptomarket <onboarding@resend.dev>"...`);
+    sender = "Cryptomarket <onboarding@resend.dev>";
+    result = await executeResendCall(sender);
+  }
+
+  if (!result.ok) {
+    const errorMsg = result.data.message || result.data.error?.message || `Resend HTTP ${result.status}`;
+    console.error(`[Resend Error] ${errorMsg}`);
+    throw new Error(errorMsg);
+  }
+
+  console.log(`[Resend Success] Email sent to ${to} (ID: ${result.data.id})`);
+  return { sent: true, provider: "resend", id: result.data.id };
 }
 
 /**
