@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { NavLink } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext.jsx";
 import { useCurrency } from "../contexts/CurrencyContext.jsx";
@@ -128,6 +128,7 @@ export default function PortfolioOptimizationPage() {
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const optimizationRequestRef = useRef(0);
 
   useEffect(() => {
     document.title = "Crypto Market - Portfolio Optimization";
@@ -175,6 +176,7 @@ export default function PortfolioOptimizationPage() {
       return;
     }
 
+    const requestId = ++optimizationRequestRef.current;
     setLoading(true);
     setError("");
 
@@ -196,12 +198,14 @@ export default function PortfolioOptimizationPage() {
       const response = await fetch(`/api/ai/portfolio/optimize?${params}`, { headers });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error);
+      if (requestId !== optimizationRequestRef.current) return;
       setResult(data);
     } catch (err) {
+      if (requestId !== optimizationRequestRef.current) return;
       setResult(null);
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setLoading(false);
+      if (requestId === optimizationRequestRef.current) setLoading(false);
     }
   };
 

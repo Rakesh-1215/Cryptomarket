@@ -41,6 +41,19 @@ def fetch_returns_matrix(
         price_series[asset["symbol"]] = daily_prices.groupby("date")["price"].last()
 
     prices = pd.DataFrame(price_series).dropna(how="any")
+
+    # A provider fallback can use a different calendar range than CoinGecko.
+    # When that prevents date-based matching, align the latest observations in
+    # order so MPT can still compare the same recent number of daily returns.
+    if len(prices) < 20 and price_series:
+        common_length = min(len(series.dropna()) for series in price_series.values())
+        prices = pd.DataFrame(
+            {
+                symbol: series.dropna().tail(common_length).to_numpy()
+                for symbol, series in price_series.items()
+            }
+        )
+
     if len(prices) < 20:
         raise RuntimeError(
             f"Not enough overlapping history across assets ({len(prices)} rows)"
