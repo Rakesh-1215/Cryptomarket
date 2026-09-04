@@ -34,7 +34,11 @@ def fetch_returns_matrix(
         if index > 0:
             time.sleep(1.1)
         frame = fetch_market_chart(asset["coinId"], days=days)
-        price_series[asset["symbol"]] = frame.set_index("date")["price"]
+        # Providers can return different times on the same UTC day. Normalize
+        # timestamps so the assets can be aligned into one daily price matrix.
+        daily_prices = frame[["date", "price"]].copy()
+        daily_prices["date"] = pd.to_datetime(daily_prices["date"], utc=True).dt.normalize()
+        price_series[asset["symbol"]] = daily_prices.groupby("date")["price"].last()
 
     prices = pd.DataFrame(price_series).dropna(how="any")
     if len(prices) < 20:
