@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext.jsx";
+import { useCurrency } from "../contexts/CurrencyContext.jsx";
 import BrandLogo from "./BrandLogo.jsx";
 
 const NAV_ITEMS = [
@@ -31,6 +32,7 @@ function mobileLinkClass({ isActive }) {
 
 export default function Navbar() {
   const { isAuthenticated, logout, user } = useAuth();
+  const { currency, setCurrency, toggleCurrency } = useCurrency();
   const [isOpen, setIsOpen] = useState(false);
   const location = useLocation();
 
@@ -75,8 +77,38 @@ export default function Navbar() {
             ))}
           </div>
 
-          {/* Desktop Auth Controls */}
+          {/* Desktop Controls: Currency Switcher + Auth */}
           <div className="hidden md:flex items-center gap-3">
+            {/* USD / INR Switcher */}
+            <div className="flex items-center rounded-lg border border-gray-700 bg-gray-900 p-0.5 text-xs font-semibold">
+              <button
+                type="button"
+                onClick={() => setCurrency("USD")}
+                className={`px-2.5 py-1 rounded transition-colors ${
+                  currency === "USD"
+                    ? "bg-blue-600 text-white shadow-sm"
+                    : "text-gray-400 hover:text-white"
+                }`}
+                title="Display prices in USD ($)"
+                aria-pressed={currency === "USD"}
+              >
+                $ USD
+              </button>
+              <button
+                type="button"
+                onClick={() => setCurrency("INR")}
+                className={`px-2.5 py-1 rounded transition-colors ${
+                  currency === "INR"
+                    ? "bg-blue-600 text-white shadow-sm"
+                    : "text-gray-400 hover:text-white"
+                }`}
+                title="Display prices in INR (₹)"
+                aria-pressed={currency === "INR"}
+              >
+                ₹ INR
+              </button>
+            </div>
+
             {isAuthenticated ? (
               <>
                 <span className="text-sm text-gray-300">
@@ -107,8 +139,19 @@ export default function Navbar() {
             )}
           </div>
 
-          {/* Mobile Header Bar: Quick Auth + Hamburger Toggle */}
+          {/* Mobile Header Bar: Currency Toggle + Quick Auth + Hamburger Toggle */}
           <div className="flex md:hidden items-center gap-2">
+            {/* Quick Currency Toggle for Mobile */}
+            <button
+              type="button"
+              onClick={toggleCurrency}
+              className="px-2 py-1 text-xs font-semibold rounded border border-gray-700 bg-gray-900 text-gray-200 hover:border-gray-500 hover:text-white transition-colors"
+              title={`Switch currency to ${currency === "USD" ? "INR (₹)" : "USD ($)"}`}
+              aria-label={`Current currency is ${currency}. Tap to switch to ${currency === "USD" ? "INR" : "USD"}`}
+            >
+              {currency === "USD" ? "$ USD" : "₹ INR"}
+            </button>
+
             {isAuthenticated ? (
               <button
                 onClick={logout}
@@ -198,7 +241,38 @@ export default function Navbar() {
             ))}
           </div>
 
-          <div className="pt-4 mt-3 border-t border-gray-800">
+          {/* Currency Selection in Mobile Dropdown */}
+          <div className="pt-3 mt-3 border-t border-gray-800">
+            <div className="flex items-center justify-between px-3 py-2 text-sm text-gray-300">
+              <span className="font-medium text-gray-400">Currency</span>
+              <div className="flex items-center rounded-lg border border-gray-700 bg-gray-900 p-0.5 text-xs font-semibold">
+                <button
+                  type="button"
+                  onClick={() => setCurrency("USD")}
+                  className={`px-3 py-1 rounded transition-colors ${
+                    currency === "USD"
+                      ? "bg-blue-600 text-white shadow-sm"
+                      : "text-gray-400 hover:text-white"
+                  }`}
+                >
+                  $ USD
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCurrency("INR")}
+                  className={`px-3 py-1 rounded transition-colors ${
+                    currency === "INR"
+                      ? "bg-blue-600 text-white shadow-sm"
+                      : "text-gray-400 hover:text-white"
+                  }`}
+                >
+                  ₹ INR
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div className="pt-2 mt-2 border-t border-gray-800">
             {isAuthenticated ? (
               <div className="space-y-3">
                 <div className="text-sm text-gray-400 px-1">
@@ -241,4 +315,5 @@ export default function Navbar() {
     </nav>
   );
 }
+
 

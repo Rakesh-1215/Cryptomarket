@@ -2,11 +2,10 @@ import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "react-toastify";
 import {
-  formatNumber,
-  formatPrice,
   getChangeColor,
 } from "../utils/coinFormatting.js";
 import { useAuth } from "../contexts/AuthContext.jsx";
+import { useCurrency } from "../contexts/CurrencyContext.jsx";
 
 const CRYPTO_API_URL = "/api/cryptos";
 
@@ -72,6 +71,7 @@ function getRiskClass(label) {
 export default function CryptoListPage({ variant }) {
   const navigate = useNavigate();
   const { buyCryptoWithRazorpay, isAuthenticated } = useAuth();
+  const { currency, rate, formatPrice, formatNumber } = useCurrency();
   const [cryptos, setCryptos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -153,14 +153,17 @@ export default function CryptoListPage({ variant }) {
     const volume = parseFloat(selectedCoin.volume24);
     const symbol = (selectedCoin.symbol || "?").toUpperCase();
 
+    const displayPrice = currency === "INR" ? price * rate : price;
+    const displayVolume = currency === "INR" ? volume * rate : volume;
+
     return window.renderMarketChart(
-      price,
+      displayPrice,
       change24h,
-      volume,
+      displayVolume,
       symbol,
       timeframe,
     );
-  }, [selectedCoin, timeframe]);
+  }, [selectedCoin, timeframe, currency, rate]);
 
   const modalStats = useMemo(() => {
     if (!selectedCoin) return null;
@@ -268,7 +271,7 @@ export default function CryptoListPage({ variant }) {
       });
       if (result.success) {
         setPaymentSuccess(
-          `Payment successful via ${paymentMethod === "paylater" ? "Pay Later" : "Card"}! You bought ${qty} ${symbol} for $${totalAmount.toFixed(2)}.`,
+          `Payment successful via ${paymentMethod === "paylater" ? "Pay Later" : "Card"}! You bought ${qty} ${symbol} for ${formatPrice(totalAmount)}.`,
         );
         setTimeout(() => {
           closePaymentModal();
@@ -292,7 +295,7 @@ export default function CryptoListPage({ variant }) {
               <th className="px-6 py-4">#</th>
               <th className="px-6 py-4">Name</th>
               <th className="px-6 py-4">Symbol</th>
-              <th className="px-6 py-4">Price</th>
+              <th className="px-6 py-4">Price ({currency})</th>
               <th className="px-6 py-4">1h</th>
               <th className="px-6 py-4">24h</th>
               <th className="px-6 py-4">7d</th>
@@ -654,7 +657,10 @@ export default function CryptoListPage({ variant }) {
 
               <div className="rounded-md bg-gray-800 border border-gray-700 px-3 py-2 text-sm text-gray-200">
                 Total:{" "}
-                <span className="font-semibold">${totalAmount.toFixed(2)}</span>
+                <span className="font-semibold">{formatPrice(totalAmount)}</span>
+                {currency === "INR" ? (
+                  <span className="text-xs text-gray-400 ml-2">(${totalAmount.toFixed(2)} USD)</span>
+                ) : null}
               </div>
               <p className="text-xs text-gray-500">
                 Checkout amount is charged in INR using your backend `USD_TO_INR_RATE` setting. `Pay Later` appears only if it is enabled on your Razorpay account.

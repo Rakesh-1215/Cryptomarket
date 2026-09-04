@@ -1,9 +1,9 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { NavLink } from "react-router-dom";
 import {
-  formatPrice,
   getChangeColor,
 } from "../utils/coinFormatting.js";
+import { useCurrency } from "../contexts/CurrencyContext.jsx";
 import { buildForecastChartData } from "../utils/forecastChart.js";
 import BrandLogo from "../components/BrandLogo.jsx";
 const MODEL_LABELS = {
@@ -144,6 +144,7 @@ function ProbabilityPanel({ probabilities, ensemble, symbol }) {
 }
 
 function SignalHero({ recommendation, ensemble, prediction, symbol }) {
+  const { formatPrice } = useCurrency();
   if (!recommendation?.signal) return null;
 
   const signal = recommendation.signal;
@@ -210,6 +211,7 @@ function SignalHero({ recommendation, ensemble, prediction, symbol }) {
 }
 
 function ModelCard({ modelKey, result, currentPrice }) {
+  const { formatPrice } = useCurrency();
   const label = MODEL_LABELS[modelKey] || modelKey;
 
   if (result?.error) {
@@ -322,6 +324,7 @@ function HistoryChart({ history, predictedPrice, currentPrice }) {
 }
 
 export default function PricePredictionPage() {
+  const { currency, formatPrice } = useCurrency();
   const [coins, setCoins] = useState([]);
   const [selectedSymbol, setSelectedSymbol] = useState("BTC");
   const [days, setDays] = useState(90);
@@ -491,7 +494,7 @@ export default function PricePredictionPage() {
               <p className="text-sm text-gray-500">{prediction.symbol}</p>
             </div>
             <div className="rounded-lg border border-gray-800 bg-gray-900 p-4">
-              <p className="text-sm text-gray-400">Current price</p>
+              <p className="text-sm text-gray-400">Current price ({currency})</p>
               <p className="mt-2 text-xl font-bold text-white">
                 {formatPrice(prediction.currentPrice)}
               </p>
@@ -536,8 +539,8 @@ export default function PricePredictionPage() {
               </p>
             </div>
             <div className="rounded-lg border border-gray-800 bg-gray-900 p-4">
-              <p className="text-sm text-gray-400">Ensemble forecast price</p>
-              <p className="mt-2 text-2xl font-bold text-white">
+              <p className="text-sm text-gray-400">Ensemble forecast price ({currency})</p>
+              <p className="mt-2 text-xl font-bold text-white">
                 {formatPrice(prediction.ensemble?.predictedPrice || 0)}
               </p>
             </div>

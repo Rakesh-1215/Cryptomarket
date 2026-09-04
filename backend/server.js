@@ -590,6 +590,14 @@ app.get("/api/cryptos", async (req, res) => {
   }
 });
 
+app.get("/api/currency-rate", (req, res) => {
+  res.json({
+    rate: USD_TO_INR_RATE,
+    currency: "INR",
+    base: "USD",
+  });
+});
+
 app.get("/api/ai/health", (req, res) => {
   const pythonBin = resolvePythonBin();
   const result = spawnSync(pythonBin, ["--version"], {

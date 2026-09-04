@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { NavLink } from "react-router-dom";
-import { formatPrice } from "../utils/coinFormatting.js";
 import { useAuth } from "../contexts/AuthContext.jsx";
+import { useCurrency } from "../contexts/CurrencyContext.jsx";
 
 const PORTFOLIO_KEYS = ["maxSharpe", "minVariance", "equalWeight", "current"];
 
@@ -86,6 +86,7 @@ function EfficientFrontierChart({ frontier, portfolios }) {
 }
 
 function AllocationTable({ portfolio }) {
+  const { currency, formatPrice } = useCurrency();
   if (!portfolio?.allocations?.length) return null;
 
   return (
@@ -95,7 +96,7 @@ function AllocationTable({ portfolio }) {
           <tr>
             <th className="px-4 py-3">Asset</th>
             <th className="px-4 py-3">Weight</th>
-            <th className="px-4 py-3">Allocation</th>
+            <th className="px-4 py-3">Allocation ({currency})</th>
             <th className="px-4 py-3">Units</th>
           </tr>
         </thead>
@@ -116,6 +117,7 @@ function AllocationTable({ portfolio }) {
 
 export default function PortfolioOptimizationPage() {
   const { isAuthenticated, token } = useAuth();
+  const { currency, formatPrice } = useCurrency();
   const [universe, setUniverse] = useState([]);
   const [selected, setSelected] = useState(["BTC", "ETH", "SOL", "BNB", "XRP", "ADA"]);
   const [days, setDays] = useState(90);
@@ -353,7 +355,7 @@ export default function PortfolioOptimizationPage() {
               value={active.metrics.sharpeRatio.toFixed(3)}
               accent="text-blue-400"
             />
-            <MetricCard label="Budget" value={formatPrice(result.budget)} />
+            <MetricCard label={`Budget (${currency})`} value={formatPrice(result.budget)} />
           </section>
 
           <section className="mt-6 flex flex-wrap gap-2">

@@ -1,11 +1,10 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { NavLink } from "react-router-dom";
 import {
-  formatNumber,
-  formatPrice,
   getChangeColor,
 } from "../utils/coinFormatting.js";
 import { useAuth } from "../contexts/AuthContext.jsx";
+import { useCurrency } from "../contexts/CurrencyContext.jsx";
 
 function predictionClass(label) {
   if (label === "Up") return "text-green-400 bg-green-950/60 border-green-800";
@@ -28,6 +27,7 @@ function Badge({ children, className }) {
 }
 
 function CoinInsightCard({ coin, mode, onBuy, canBuy, busy }) {
+  const { formatPrice } = useCurrency();
   const trend = coin.ai?.trendPrediction;
   const risk = coin.ai?.risk;
   const change24h = Number.parseFloat(coin.percent_change_24h) || 0;
@@ -80,6 +80,7 @@ function CoinInsightCard({ coin, mode, onBuy, canBuy, busy }) {
 
 export default function AiDashboardPage() {
   const { isAuthenticated, token, buyCryptoWithRazorpay } = useAuth();
+  const { currency, formatPrice, formatNumber } = useCurrency();
   const [insights, setInsights] = useState(null);
   const [recommendations, setRecommendations] = useState(null);
   const [purchases, setPurchases] = useState(null);
@@ -267,8 +268,8 @@ export default function AiDashboardPage() {
         return;
       }
 
-      setPaymentSuccess(`Payment successful via ${paymentMethod === "paylater" ? "Pay Later" : "Card"}. Purchased ${qty} ${symbol} for $${(qty * price).toFixed(2)}.`);
-      setActionMessage(`Payment successful. Purchased ${qty} ${symbol} for $${(qty * price).toFixed(2)}.`);
+      setPaymentSuccess(`Payment successful via ${paymentMethod === "paylater" ? "Pay Later" : "Card"}. Purchased ${qty} ${symbol} for ${formatPrice(qty * price)}.`);
+      setActionMessage(`Payment successful. Purchased ${qty} ${symbol} for ${formatPrice(qty * price)}.`);
       setRefreshTick((value) => value + 1);
       setTimeout(() => {
         closePaymentModal();
@@ -656,7 +657,10 @@ export default function AiDashboardPage() {
               </div>
 
               <div className="rounded-md border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-200">
-                Total: <span className="font-semibold">${totalAmount.toFixed(2)}</span>
+                Total: <span className="font-semibold">{formatPrice(totalAmount)}</span>
+                {currency === "INR" ? (
+                  <span className="text-xs text-gray-400 ml-2">(${totalAmount.toFixed(2)} USD)</span>
+                ) : null}
               </div>
               <p className="text-xs text-gray-500">
                 Checkout amount is charged in INR using your backend USD_TO_INR_RATE setting. Pay Later appears only if it is enabled on your Razorpay account.

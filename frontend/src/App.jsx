@@ -1,6 +1,7 @@
 import React from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { AuthProvider } from "./contexts/AuthContext.jsx";
+import { CurrencyProvider } from "./contexts/CurrencyContext.jsx";
 import Navbar from "./components/Navbar.jsx";
 import AiDashboardPage from "./pages/AiDashboardPage.jsx";
 import PricePredictionPage from "./pages/PricePredictionPage.jsx";
@@ -14,33 +15,35 @@ import VerifyEmailPage from "./pages/VerifyEmailPage.jsx";
 export default function App() {
   return (
     <AuthProvider>
-      <div className="min-h-screen bg-black text-gray-100 pt-16">
-        <Navbar />
-        <Routes>
-          <Route path="/" element={<CryptoListPage variant="top" />} />
-          <Route
-            path="/trending"
-            element={<CryptoListPage variant="trending" />}
-          />
-          <Route
-            path="/most-visited"
-            element={<CryptoListPage variant="mostVisited" />}
-          />
-          <Route path="/new" element={<CryptoListPage variant="new" />} />
-          <Route
-            path="/gainers"
-            element={<CryptoListPage variant="gainers" />}
-          />
-          <Route path="/ai-dashboard" element={<AiDashboardPage />} />
-          <Route path="/price-prediction" element={<PricePredictionPage />} />
-          <Route path="/portfolio-optimization" element={<PortfolioOptimizationPage />} />
-          <Route path="/recommendations" element={<RecommendationsPage />} />
-          <Route path="/login" element={<LoginPage />} />
-          <Route path="/register" element={<RegisterPage />} />
-          <Route path="/verify-email" element={<VerifyEmailPage />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </div>
+      <CurrencyProvider>
+        <div className="min-h-screen bg-black text-gray-100 pt-16">
+          <Navbar />
+          <Routes>
+            <Route path="/" element={<CryptoListPage variant="top" />} />
+            <Route
+              path="/trending"
+              element={<CryptoListPage variant="trending" />}
+            />
+            <Route
+              path="/most-visited"
+              element={<CryptoListPage variant="mostVisited" />}
+            />
+            <Route path="/new" element={<CryptoListPage variant="new" />} />
+            <Route
+              path="/gainers"
+              element={<CryptoListPage variant="gainers" />}
+            />
+            <Route path="/ai-dashboard" element={<AiDashboardPage />} />
+            <Route path="/price-prediction" element={<PricePredictionPage />} />
+            <Route path="/portfolio-optimization" element={<PortfolioOptimizationPage />} />
+            <Route path="/recommendations" element={<RecommendationsPage />} />
+            <Route path="/login" element={<LoginPage />} />
+            <Route path="/register" element={<RegisterPage />} />
+            <Route path="/verify-email" element={<VerifyEmailPage />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </div>
+      </CurrencyProvider>
     </AuthProvider>
   );
 }
